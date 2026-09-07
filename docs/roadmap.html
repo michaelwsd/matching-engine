@@ -1,0 +1,531 @@
+<title>Matching Engine Roadmap</title>
+<style>
+:root{
+  --bg:#f5f2ea;
+  --surface:#ffffff;
+  --surface-alt:#ece6d6;
+  --ink:#211c14;
+  --ink-muted:#6f6656;
+  --accent:#a8590c;
+  --accent-soft:#ecd9ba;
+  --border:#ddd3ba;
+  --success:#3f7d4f;
+  --shadow:0 1px 2px rgba(33,28,20,.06);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#16130d;
+    --surface:#201b12;
+    --surface-alt:#2a2318;
+    --ink:#f1e9d8;
+    --ink-muted:#a89d86;
+    --accent:#e0a34a;
+    --accent-soft:#3a2d16;
+    --border:#3a3222;
+    --success:#7bbd8a;
+    --shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#16130d;
+  --surface:#201b12;
+  --surface-alt:#2a2318;
+  --ink:#f1e9d8;
+  --ink-muted:#a89d86;
+  --accent:#e0a34a;
+  --accent-soft:#3a2d16;
+  --border:#3a3222;
+  --success:#7bbd8a;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  line-height:1.55;
+}
+::selection{background:var(--accent-soft)}
+
+.wrap{max-width:800px;margin:0 auto;padding:56px 24px 96px}
+
+code, .mono, .pill, .kv dt, .stat b, .toc a span.n{
+  font-family:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+
+/* ---------- header ---------- */
+header.top{margin-bottom:40px}
+.eyebrow{
+  color:var(--accent);
+  font-family:"IBM Plex Mono", monospace;
+  font-size:.78rem;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  margin:0 0 10px;
+}
+h1{
+  font-size:2.15rem;
+  font-weight:700;
+  letter-spacing:-.01em;
+  margin:0 0 12px;
+  text-wrap:balance;
+}
+.dek{
+  color:var(--ink-muted);
+  font-size:1.05rem;
+  max-width:62ch;
+  margin:0 0 28px;
+}
+
+/* progress */
+.progress-wrap{
+  display:flex;align-items:center;gap:14px;
+  padding:14px 18px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:10px;
+  box-shadow:var(--shadow);
+}
+.progress-track{
+  flex:1;height:8px;border-radius:99px;
+  background:var(--surface-alt);
+  overflow:hidden;
+}
+.progress-fill{
+  height:100%;width:0%;
+  background:var(--accent);
+  border-radius:99px;
+  transition:width .35s ease;
+}
+.progress-label{
+  font-family:"IBM Plex Mono",monospace;
+  font-size:.82rem;
+  color:var(--ink-muted);
+  white-space:nowrap;
+}
+.progress-label b{color:var(--ink)}
+
+/* ---------- toc ---------- */
+nav.toc{
+  margin:32px 0 44px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface);
+  box-shadow:var(--shadow);
+  overflow:hidden;
+}
+nav.toc ol{list-style:none;margin:0;padding:0}
+nav.toc li{border-top:1px solid var(--border)}
+nav.toc li:first-child{border-top:none}
+nav.toc a{
+  display:flex;align-items:baseline;gap:12px;
+  padding:11px 18px;
+  text-decoration:none;
+  color:var(--ink);
+}
+nav.toc a:hover, nav.toc a:focus-visible{background:var(--accent-soft)}
+nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+nav.toc a span.n{color:var(--accent);font-weight:600;font-size:.85rem;width:1.6em}
+nav.toc a span.t{flex:1}
+nav.toc a span.est{color:var(--ink-muted);font-size:.82rem}
+
+/* ---------- stack panel ---------- */
+.stack{
+  margin:0 0 44px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  background:var(--surface);
+  box-shadow:var(--shadow);
+  padding:22px 24px;
+}
+.stack h2{margin:0 0 4px;font-size:1.05rem}
+.stack .dek{margin:0 0 16px;font-size:.92rem}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:8px 20px;margin:0}
+.kv dt{color:var(--accent);font-size:.82rem;white-space:nowrap;padding-top:1px}
+.kv dd{margin:0;font-size:.92rem}
+.kv dd .why{color:var(--ink-muted)}
+
+/* ---------- phases ---------- */
+section.phase{
+  margin:0 0 8px;
+  padding:36px 0;
+  border-top:1px solid var(--border);
+  scroll-margin-top:20px;
+}
+section.phase:first-of-type{border-top:none}
+.phase-head{display:flex;gap:16px;align-items:flex-start;margin-bottom:6px}
+.phase-num{
+  font-family:"IBM Plex Mono",monospace;
+  font-size:.95rem;font-weight:600;
+  color:var(--accent);
+  background:var(--accent-soft);
+  border-radius:7px;
+  padding:3px 9px;
+  flex:none;
+}
+.phase-head h2{font-size:1.4rem;margin:0;text-wrap:balance}
+.phase-est{color:var(--ink-muted);font-size:.85rem;margin:2px 0 0 auto;white-space:nowrap;font-family:"IBM Plex Mono",monospace}
+.phase-goal{color:var(--ink-muted);margin:6px 0 22px 46px;max-width:62ch}
+
+.tags{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 20px 46px}
+.tag{
+  font-family:"IBM Plex Mono",monospace;
+  font-size:.74rem;
+  color:var(--ink-muted);
+  border:1px solid var(--border);
+  border-radius:99px;
+  padding:3px 10px;
+}
+
+h3.sub{
+  font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--ink-muted);margin:22px 0 10px 46px;
+}
+ol.steps{margin:0 0 0 46px;padding:0 0 0 20px}
+ol.steps li{margin:0 0 11px;padding-left:4px;max-width:64ch}
+ol.steps li:last-child{margin-bottom:0}
+ol.steps code, .phase p code{
+  background:var(--surface-alt);
+  border-radius:4px;
+  padding:1px 5px;
+  font-size:.86em;
+}
+
+.deliverable{
+  margin:22px 0 0 46px;
+  padding:14px 16px;
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-left:3px solid var(--success);
+  border-radius:0 8px 8px 0;
+  max-width:64ch;
+}
+.deliverable .label{
+  font-family:"IBM Plex Mono",monospace;
+  font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--success);margin:0 0 4px;
+}
+
+.check{
+  display:flex;gap:10px;align-items:flex-start;
+  margin:10px 0 0 46px;
+  cursor:pointer;
+  max-width:64ch;
+}
+.check input{
+  appearance:none;-webkit-appearance:none;
+  width:17px;height:17px;flex:none;margin-top:2px;
+  border:1.5px solid var(--border);
+  border-radius:4px;
+  background:var(--surface);
+  display:grid;place-content:center;
+  cursor:pointer;
+}
+.check input::before{
+  content:"";width:9px;height:9px;border-radius:2px;
+  background:var(--accent);transform:scale(0);transition:transform .12s ease;
+}
+.check input:checked::before{transform:scale(1)}
+.check input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.check span{font-size:.92rem}
+.check input:checked ~ span{color:var(--ink-muted);text-decoration:line-through}
+
+/* ---------- stretch ---------- */
+.stretch{
+  margin-top:8px;padding-top:36px;border-top:1px solid var(--border);
+}
+.stretch h2{font-size:1.4rem;margin:0 0 6px}
+.stretch .dek{margin:0 0 20px;max-width:62ch}
+.stretch ul{margin:0;padding-left:20px}
+.stretch li{margin-bottom:9px;max-width:64ch}
+
+footer{
+  margin-top:56px;padding-top:20px;border-top:1px solid var(--border);
+  color:var(--ink-muted);font-size:.82rem;
+}
+
+@media (max-width:640px){
+  .wrap{padding:36px 16px 72px}
+  h1{font-size:1.7rem}
+  .phase-head{flex-wrap:wrap}
+  .phase-est{margin-left:46px}
+  .phase-goal,.tags,h3.sub,ol.steps,.deliverable,.check{margin-left:0}
+}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<div class="wrap">
+
+  <header class="top">
+    <p class="eyebrow">Java · Basic → Intermediate-Advanced</p>
+    <h1>Matching Engine Roadmap</h1>
+    <p class="dek">A five-phase build plan for a limit order book and matching engine in Java, written to prepare for the IMC Trading internship. Each phase layers on new language and concurrency concepts on top of a working system — nothing is thrown away between phases.</p>
+
+    <div class="progress-wrap">
+      <span class="progress-label">Progress <b id="progress-count">0/0</b></span>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+      <span class="progress-label" id="progress-pct">0%</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Table of contents">
+    <ol>
+      <li><a href="#setup"><span class="n">00</span><span class="t">Environment &amp; tooling</span><span class="est">0.5–1 day</span></a></li>
+      <li><a href="#phase-1"><span class="n">01</span><span class="t">Core order book</span><span class="est">4–6 days</span></a></li>
+      <li><a href="#phase-2"><span class="n">02</span><span class="t">Matching logic</span><span class="est">5–7 days</span></a></li>
+      <li><a href="#phase-3"><span class="n">03</span><span class="t">Concurrency</span><span class="est">6–8 days</span></a></li>
+      <li><a href="#phase-4"><span class="n">04</span><span class="t">Market data &amp; persistence</span><span class="est">5–7 days</span></a></li>
+      <li><a href="#phase-5"><span class="n">05</span><span class="t">Market-making strategy</span><span class="est">5–7 days</span></a></li>
+      <li><a href="#stretch"><span class="n">＋</span><span class="t">Stretch goals</span><span class="est">optional</span></a></li>
+    </ol>
+  </nav>
+
+  <section class="stack" id="stack">
+    <h2>Recommended stack</h2>
+    <p class="dek">Everything here is free and standard in real Java shops — no need to substitute anything to keep costs down.</p>
+    <dl class="kv">
+      <dt>JDK</dt><dd>25 (LTS), Eclipse Temurin build. Use <code>sdkman</code> to install and switch versions. <span class="why">— gives you virtual threads and pattern matching for Phase 3/2.</span></dd>
+      <dt>Build tool</dt><dd>Maven <span class="why">— simplest to read while you're still learning the language; revisit with Gradle afterwards if you want it.</span></dd>
+      <dt>IDE</dt><dd>IntelliJ IDEA (Community Edition) <span class="why">— free, and the de facto standard for Java at trading firms.</span></dd>
+      <dt>Testing</dt><dd><code>JUnit 5</code> + <code>AssertJ</code> for fluent assertions</dd>
+      <dt>JSON</dt><dd><code>Jackson</code> <span class="why">— the default choice in production Java</span></dd>
+      <dt>Logging</dt><dd><code>SLF4J</code> + <code>Logback</code>, in place of <code>System.out.println</code> from Phase 4 onward</dd>
+      <dt>Benchmarking</dt><dd><code>JMH</code> <span class="why">— for the optional latency comparisons in Phase 3</span></dd>
+      <dt>Version control</dt><dd>Git, pushed to a public GitHub repo from day one <span class="why">— it becomes a talking point in interviews</span></dd>
+    </dl>
+  </section>
+
+  <section class="phase" id="setup">
+    <div class="phase-head">
+      <span class="phase-num">00</span>
+      <h2>Environment &amp; tooling setup</h2>
+      <span class="phase-est">0.5–1 day</span>
+    </div>
+    <p class="phase-goal">Get a project scaffold running end to end before writing any real logic, so every later phase starts from a known-good baseline.</p>
+
+    <ol class="steps">
+      <li>Install JDK 25 via <code>sdkman install java 25-tem</code> (or the Adoptium installer on Windows), and confirm with <code>java -version</code>.</li>
+      <li>Install IntelliJ IDEA Community Edition and create a new <strong>Maven</strong> project: groupId <code>com.mwang</code>, artifactId <code>matching-engine</code>.</li>
+      <li>Set <code>maven.compiler.release</code> to <code>21</code> or higher in <code>pom.xml</code> so records, sealed interfaces and pattern matching are available.</li>
+      <li>Add <code>junit-jupiter</code> and <code>assertj-core</code> as test-scope dependencies.</li>
+      <li>Initialise Git, add IntelliJ's generated <code>.gitignore</code> plus <code>target/</code>, and push an empty repo to GitHub.</li>
+      <li>Write a placeholder <code>Main</code> class and one trivially-true JUnit test, run both from IntelliJ's gutter icons, and commit as <code>"Project scaffold"</code>.</li>
+    </ol>
+
+    <div class="deliverable">
+      <p class="label">Definition of done</p>
+      <p>A GitHub repo with a green build, a passing placeholder test, and a two-line README describing what the project will become.</p>
+    </div>
+    <label class="check"><input type="checkbox" data-id="setup-done"><span>Repo scaffolded, pushed, and building green</span></label>
+  </section>
+
+  <section class="phase" id="phase-1">
+    <div class="phase-head">
+      <span class="phase-num">01</span>
+      <h2>Core order book</h2>
+      <span class="phase-est">4–6 days</span>
+    </div>
+    <p class="phase-goal">Model resting orders and price levels correctly before any matching exists. This is where most of Java's "basics" actually live.</p>
+    <div class="tags">
+      <span class="tag">classes vs records</span><span class="tag">enums</span><span class="tag">generics</span>
+      <span class="tag">TreeMap / ArrayDeque</span><span class="tag">encapsulation</span><span class="tag">JUnit basics</span>
+    </div>
+
+    <h3 class="sub">Build steps</h3>
+    <ol class="steps">
+      <li>In a <code>model</code> package: a <code>Side</code> enum (<code>BUY</code>, <code>SELL</code>), an <code>OrderType</code> enum (<code>LIMIT</code>, <code>MARKET</code>), a <code>Trade</code> record (immutable — <code>buyOrderId</code>, <code>sellOrderId</code>, price, quantity, timestamp), and an <code>Order</code> <em>class</em> rather than a record, since its remaining quantity mutates on partial fills. Store price as a scaled <code>long</code> (e.g. cents), never a <code>double</code> — this is worth understanding properly, since floating-point money bugs are a classic interview topic.</li>
+      <li>Build a <code>PriceLevel</code> class wrapping an <code>ArrayDeque&lt;Order&gt;</code> as a FIFO queue at one price, exposing add, remove and total resting quantity.</li>
+      <li>Build the <code>OrderBook</code>: a <code>TreeMap&lt;Long, PriceLevel&gt;</code> for bids (best = highest price) and one for asks (best = lowest price), using the map's natural and reverse orderings.</li>
+      <li>Implement <code>addOrder</code>, <code>cancelOrder</code>, <code>bestBid()</code>, <code>bestAsk()</code>, and <code>depth(int levels)</code> for a snapshot view.</li>
+      <li>Write <code>OrderBookTest</code>: orders resting at multiple price levels, best bid/ask correctness after inserts and cancels, and FIFO order preserved within a level.</li>
+      <li>Add a small <code>Main</code> that builds a book from a hardcoded list of orders and prints its depth — your first visibly "working" milestone.</li>
+    </ol>
+
+    <div class="deliverable">
+      <p class="label">Definition of done</p>
+      <p>An order book that stores, cancels and displays resting orders with correct price-time priority, backed by passing tests.</p>
+    </div>
+    <label class="check"><input type="checkbox" data-id="p1-model"><span>Order, Trade, Side and OrderType modelled</span></label>
+    <label class="check"><input type="checkbox" data-id="p1-book"><span>OrderBook with working best bid/ask and cancel</span></label>
+    <label class="check"><input type="checkbox" data-id="p1-tests"><span>Unit tests green for inserts, cancels, FIFO</span></label>
+  </section>
+
+  <section class="phase" id="phase-2">
+    <div class="phase-head">
+      <span class="phase-num">02</span>
+      <h2>Matching logic</h2>
+      <span class="phase-est">5–7 days</span>
+    </div>
+    <p class="phase-goal">Turn a passive book into an engine that actually crosses orders and produces trades.</p>
+    <div class="tags">
+      <span class="tag">interfaces</span><span class="tag">strategy pattern</span><span class="tag">custom exceptions</span>
+      <span class="tag">defensive validation</span>
+    </div>
+
+    <h3 class="sub">Build steps</h3>
+    <ol class="steps">
+      <li>Define a <code>MatchingEngine</code> interface with <code>List&lt;Trade&gt; submit(Order incoming)</code>.</li>
+      <li>Implement <code>PriceTimeMatchingEngine</code>: on an incoming buy, walk asks from the best price upward while <code>incoming.price &gt;= ask.price</code>, filling FIFO within each level, emitting <code>Trade</code>s, and resting any unfilled <code>LIMIT</code> remainder on the book.</li>
+      <li>Handle <code>MARKET</code> orders — match against the best available liquidity regardless of price, and decide (and document) what happens to an unfilled remainder.</li>
+      <li>Add unchecked <code>InvalidOrderException</code> and <code>UnknownOrderException</code> (for cancelling a non-existent id), and be ready to justify why unchecked over checked here.</li>
+      <li>Add self-trade prevention: reject or cancel the resting order when the incoming and resting orders share an account id.</li>
+      <li>Extend the test suite with a hand-checked scenario table: full fill, partial fill, a marketable limit crossing multiple price levels, an unfilled market order, and self-trade prevention.</li>
+      <li>Extract a <code>MatchingStrategy</code> interface behind <code>PriceTimeMatchingEngine</code> even though you'll only ship one implementation now — it sets up the pro-rata stretch goal later without a rewrite.</li>
+    </ol>
+
+    <div class="deliverable">
+      <p class="label">Definition of done</p>
+      <p>The engine crosses orders and produces trades that match a scenario table you've hand-verified in the test class.</p>
+    </div>
+    <label class="check"><input type="checkbox" data-id="p2-cross"><span>Price-time matching crosses limit orders correctly</span></label>
+    <label class="check"><input type="checkbox" data-id="p2-market"><span>Market orders and self-trade prevention handled</span></label>
+    <label class="check"><input type="checkbox" data-id="p2-scenarios"><span>Scenario-table tests green</span></label>
+  </section>
+
+  <section class="phase" id="phase-3">
+    <div class="phase-head">
+      <span class="phase-num">03</span>
+      <h2>Concurrency</h2>
+      <span class="phase-est">6–8 days</span>
+    </div>
+    <p class="phase-goal">Add concurrent order intake without letting it corrupt the correctness you just proved in Phase 2 — this is the phase interviewers will probe hardest.</p>
+    <div class="tags">
+      <span class="tag">BlockingQueue</span><span class="tag">virtual threads</span><span class="tag">single-writer principle</span>
+      <span class="tag">determinism testing</span><span class="tag">JMH</span>
+    </div>
+
+    <h3 class="sub">Build steps</h3>
+    <ol class="steps">
+      <li>Keep <code>PriceTimeMatchingEngine</code> single-threaded for determinism — this mirrors how real matching engines are built — and put concurrency at the ingestion boundary instead.</li>
+      <li>Build an <code>OrderGateway</code>: producer threads (simulated clients) push onto a <code>LinkedBlockingQueue&lt;Order&gt;</code>; one dedicated matcher thread drains it sequentially into the engine.</li>
+      <li>Use <code>Executors.newVirtualThreadPerTaskExecutor()</code> for the simulated client producers, to practise the concurrency model modern Java trading systems increasingly lean on, while the matcher itself stays a single platform thread.</li>
+      <li>Add graceful shutdown (a poison-pill order or <code>ExecutorService.close()</code>) and a <code>CountDownLatch</code> to know when a simulated batch has fully drained.</li>
+      <li>Write the determinism test: submit the same N orders both sequentially and concurrently from multiple threads, and assert identical trade counts and fill totals. This single test is the most valuable one in the project — it proves the concurrent wrapper hasn't broken the engine underneath.</li>
+      <li><em>Stretch:</em> benchmark queue submission latency with JMH across <code>LinkedBlockingQueue</code>, <code>ArrayBlockingQueue</code> and a <code>ConcurrentLinkedQueue</code> with your own backpressure logic.</li>
+    </ol>
+
+    <div class="deliverable">
+      <p class="label">Definition of done</p>
+      <p>Multi-threaded order intake feeding the single-threaded matcher, with a passing test proving concurrent and sequential runs produce identical results.</p>
+    </div>
+    <label class="check"><input type="checkbox" data-id="p3-gateway"><span>OrderGateway with virtual-thread producers built</span></label>
+    <label class="check"><input type="checkbox" data-id="p3-determinism"><span>Determinism test passes under concurrent load</span></label>
+  </section>
+
+  <section class="phase" id="phase-4">
+    <div class="phase-head">
+      <span class="phase-num">04</span>
+      <h2>Market data &amp; persistence</h2>
+      <span class="phase-est">5–7 days</span>
+    </div>
+    <p class="phase-goal">Feed the engine from something resembling real market data, and give it a way to report what it's doing.</p>
+    <div class="tags">
+      <span class="tag">streams / lambdas</span><span class="tag">NIO.2</span><span class="tag">Jackson</span>
+      <span class="tag">try-with-resources</span><span class="tag">SLF4J / Logback</span>
+    </div>
+
+    <h3 class="sub">Build steps</h3>
+    <ol class="steps">
+      <li>Write a <code>MarketDataGenerator</code> producing a synthetic bounded random-walk mid-price, and submit orders around it into the Phase 3 gateway.</li>
+      <li>Alternatively, parse a small historical tick CSV with <code>Files.lines()</code> and streams into a <code>List&lt;MarketTick&gt;</code>, then replay it at accelerated speed with a <code>ScheduledExecutorService</code>.</li>
+      <li>Add a <code>TradeLogger</code> that appends every executed <code>Trade</code> to a file with try-with-resources and a <code>BufferedWriter</code>, flushed safely under concurrent producers.</li>
+      <li>Add Jackson to serialise a <code>BookSnapshot</code> (best bid/ask, depth) to JSON, and expose it over a minimal <code>com.sun.net.httpserver.HttpServer</code> endpoint — enough of an API to poll without pulling in a full framework.</li>
+      <li>Replace <code>System.out.println</code> with SLF4J + Logback: info-level on trades, warn-level on rejected orders, console and rolling-file appenders configured in <code>logback.xml</code>.</li>
+    </ol>
+
+    <div class="deliverable">
+      <p class="label">Definition of done</p>
+      <p>A runnable simulation that logs trades to a file and exposes live book snapshots as JSON, driven by synthetic or replayed data.</p>
+    </div>
+    <label class="check"><input type="checkbox" data-id="p4-data"><span>Market data generator or historical replay working</span></label>
+    <label class="check"><input type="checkbox" data-id="p4-io"><span>Trade logging and JSON snapshot endpoint working</span></label>
+  </section>
+
+  <section class="phase" id="phase-5">
+    <div class="phase-head">
+      <span class="phase-num">05</span>
+      <h2>Market-making strategy</h2>
+      <span class="phase-est">5–7 days</span>
+    </div>
+    <p class="phase-goal">Tie every earlier phase together into something that resembles what IMC actually does, with a strategy quoting against your own book.</p>
+    <div class="tags">
+      <span class="tag">functional interfaces</span><span class="tag">composition</span><span class="tag">ScheduledExecutorService</span>
+      <span class="tag">basic P&amp;L</span>
+    </div>
+
+    <h3 class="sub">Build steps</h3>
+    <ol class="steps">
+      <li>Define a <code>Strategy</code> functional interface: <code>void onMarketData(BookSnapshot snapshot, OrderGateway gateway)</code>.</li>
+      <li>Implement <code>SimpleMarketMaker</code>: quotes a two-sided spread around the current mid-price at a configurable half-spread and order size.</li>
+      <li>Add a <code>Position</code> class tracking net quantity and realised/unrealised P&amp;L as the strategy's own trades come back from the engine.</li>
+      <li>Add a risk limit: once <code>|position|</code> exceeds a configured maximum, widen the spread or stop quoting entirely — this is the single most "IMC-flavoured" piece of the whole build.</li>
+      <li>Requote on a fixed interval with <code>ScheduledExecutorService</code>, cancelling and replacing stale quotes rather than leaving them resting indefinitely.</li>
+      <li>Write a <code>SimulationRunner</code> tying Phases 1–5 together end to end, printing a running summary of fills, position and P&amp;L at the end of a timed run.</li>
+    </ol>
+
+    <div class="deliverable">
+      <p class="label">Definition of done</p>
+      <p>A self-contained simulation that runs for a fixed duration and prints a coherent P&amp;L summary for a market maker quoting against your own engine.</p>
+    </div>
+    <label class="check"><input type="checkbox" data-id="p5-maker"><span>SimpleMarketMaker quoting and requoting correctly</span></label>
+    <label class="check"><input type="checkbox" data-id="p5-risk"><span>Position tracking and risk limit enforced</span></label>
+    <label class="check"><input type="checkbox" data-id="p5-runner"><span>End-to-end SimulationRunner prints a P&amp;L summary</span></label>
+  </section>
+
+  <section class="stretch" id="stretch">
+    <h2>Stretch goals</h2>
+    <p class="dek">Only worth doing once Phases 1–5 are solid — none of these are needed to call the project finished.</p>
+    <ul>
+      <li>A minimal front-end with <strong>Javalin</strong> (much lighter than Spring Boot for this scale) streaming live book depth to a browser page over a WebSocket.</li>
+      <li>A <code>Dockerfile</code> so the whole simulation runs from one <code>docker run</code>.</li>
+      <li>A GitHub Actions workflow running <code>mvn test</code> on every push — real CI experience for the repo.</li>
+      <li>A second <code>MatchingStrategy</code> implementation (pro-rata allocation) behind the Phase 2 interface, to prove the abstraction actually holds under a second use.</li>
+    </ul>
+    <label class="check" style="margin-top:18px"><input type="checkbox" data-id="stretch-any"><span>At least one stretch goal attempted</span></label>
+  </section>
+
+  <footer>
+    Check off milestones as you complete them — progress is saved locally in this browser only.
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  var STORAGE_KEY = "matching-engine-roadmap-progress";
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.check input[type="checkbox"]'));
+  var state = {};
+  try {
+    state = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch (e) { state = {}; }
+
+  function save(){
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function updateProgress(){
+    var total = boxes.length;
+    var done = boxes.filter(function(b){ return b.checked; }).length;
+    var pct = total ? Math.round((done/total)*100) : 0;
+    var fill = document.getElementById('progress-fill');
+    var pctEl = document.getElementById('progress-pct');
+    var countEl = document.getElementById('progress-count');
+    if (fill) fill.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (countEl) countEl.textContent = done + '/' + total;
+  }
+
+  boxes.forEach(function(box){
+    var id = box.getAttribute('data-id');
+    if (state[id]) box.checked = true;
+    box.addEventListener('change', function(){
+      state[id] = box.checked;
+      save();
+      updateProgress();
+    });
+  });
+
+  updateProgress();
+})();
+</script>
