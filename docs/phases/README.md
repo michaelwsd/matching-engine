@@ -115,6 +115,10 @@ You'll meet these as the phases introduce them. Come back here when a term goes 
 | **Adverse selection** | Getting filled precisely because the market is about to move against you. The market maker's central risk. |
 | **Realised P&L** | Profit locked in by closing a position. |
 | **Unrealised P&L** | Paper profit on an open position, marked at current market price. |
+| **FIX** | Financial Information eXchange - the standard text protocol for order entry. Tag-value pairs over TCP. |
+| **Order entry** | The channel clients use to send orders in. TCP, because losing an order is unacceptable. |
+| **Market data feed** | The channel the venue publishes book state on. UDP multicast, because one publisher serves thousands of listeners. |
+| **Framing** | Finding message boundaries in a TCP byte stream - by delimiter or length prefix. TCP does not preserve them for you. |
 
 ---
 
