@@ -1,0 +1,80 @@
+package com.mwang.engine;
+
+import com.mwang.book.OrderBook;
+import com.mwang.model.Order;
+import com.mwang.model.OrderType;
+import com.mwang.model.Side;
+import com.mwang.model.Trade;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * Matches incoming orders against resting liquidity using price-time priority: better
+ * prices fill first, and at equal price the order that arrived first fills first.
+ *
+ * <p>The book is supplied rather than created here, so that the same book can be read by
+ * the demo, the snapshot endpoint and any strategy without going through the engine. The
+ * engine is expected to be the only writer; from Phase 3 that is enforced by confining it
+ * to a single matcher thread.
+ *
+ * <p>Not thread-safe.
+ */
+public class PriceTimeMatchingEngine implements MatchingEngine {
+
+    private final OrderBook book;
+
+    public PriceTimeMatchingEngine(OrderBook book) {
+        this.book = Objects.requireNonNull(book, "book");
+    }
+
+    @Override
+    public List<Trade> submit(Order incoming) {
+        List<Trade> trades = new ArrayList<>();
+        long timestamp = System.currentTimeMillis();
+
+        while (!incoming.isFullyFilled()) {
+            Optional<Order> maybe = book.peekBest(incoming.getSide() == Side.SELL ? Side.BUY : Side.SELL);
+            if (maybe.isEmpty()) break;
+
+            // the resting order we want to match against
+            Order resting = maybe.get();
+
+            // check if there is a match
+            if (!ordersCrossed(incoming, resting)) break;
+
+            // check if account id is the same
+            if (incoming.getAccountId() == resting.getAccountId()) return trades;
+            int filledQuantity = Integer.min(incoming.getRemainingQuantity(), resting.getRemainingQuantity());
+            incoming.fill(filledQuantity);
+            resting.fill(filledQuantity);
+
+            long buyId = incoming.getSide() == Side.BUY ? incoming.getOrderId() : resting.getOrderId();
+            long sellId = incoming.getSide() == Side.SELL ? incoming.getOrderId() : resting.getOrderId();
+            trades.add(new Trade(buyId, sellId, resting.getPrice(), filledQuantity, timestamp));
+
+            // clean up
+            if (resting.isFullyFilled()) {
+                book.removeOrder(resting.getOrderId());
+            }
+        }
+
+        // check if incoming has any remaining
+        if (incoming.getOrderType() == OrderType.LIMIT && !incoming.isFullyFilled()) {
+            book.addOrder(incoming);
+        }
+
+        return trades;
+    }
+
+    private boolean ordersCrossed(Order incoming, Order resting) {
+        if (incoming.getOrderType() == OrderType.MARKET) return true;
+        if (incoming.getOrderType() == OrderType.LIMIT) {
+            if (incoming.getSide() == Side.BUY && incoming.getPrice() < resting.getPrice()) return false;
+            return incoming.getSide() != Side.SELL || incoming.getPrice() <= resting.getPrice();
+        }
+        return true;
+    }
+}

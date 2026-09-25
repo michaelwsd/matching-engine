@@ -5,7 +5,7 @@ import com.mwang.model.Order;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
-public class PriceLevel {
+class PriceLevel {
     private final Deque<Order> orders = new ArrayDeque<>();
 
     public void add(Order order) {

@@ -24,8 +24,8 @@ class OrderBookTest {
 
     @Test
     void shouldHaveNoBestPricesWhenEmpty() {
-        assertThat(book.bestBid()).isEmpty();
-        assertThat(book.bestAsk()).isEmpty();
+        assertThat(book.bestBid()).isEqualTo(OrderBook.NO_PRICE);
+        assertThat(book.bestAsk()).isEqualTo(OrderBook.NO_PRICE);
     }
 
     @Test
@@ -34,7 +34,7 @@ class OrderBookTest {
         book.addOrder(buy(10001, 50));
         book.addOrder(buy(9997, 500));
 
-        assertThat(book.bestBid()).hasValue(10001);
+        assertThat(book.bestBid()).isEqualTo(10001);
     }
 
     @Test
@@ -43,15 +43,15 @@ class OrderBookTest {
         book.addOrder(sell(10002, 300));
         book.addOrder(sell(10010, 400));
 
-        assertThat(book.bestAsk()).hasValue(10002);
+        assertThat(book.bestAsk()).isEqualTo(10002);
     }
 
     @Test
     void shouldKeepBidsAndAsksIndependent() {
         book.addOrder(buy(9998, 100));
 
-        assertThat(book.bestBid()).hasValue(9998);
-        assertThat(book.bestAsk()).isEmpty();
+        assertThat(book.bestBid()).isEqualTo(9998);
+        assertThat(book.bestAsk()).isEqualTo(OrderBook.NO_PRICE);
     }
 
     // --- depth ---
@@ -135,7 +135,7 @@ class OrderBookTest {
 
         book.cancelOrder(best.getOrderId());
 
-        assertThat(book.bestBid()).hasValue(9998);
+        assertThat(book.bestBid()).isEqualTo(9998);
     }
 
     @Test
@@ -145,7 +145,7 @@ class OrderBookTest {
 
         book.cancelOrder(only.getOrderId());
 
-        assertThat(book.bestBid()).isEmpty();
+        assertThat(book.bestBid()).isEqualTo(OrderBook.NO_PRICE);
         assertThat(book.bidDepth(5)).isEmpty();
     }
 
@@ -200,7 +200,58 @@ class OrderBookTest {
 
         book.addOrder(new Order(1, 42, 9998, 100, Side.BUY, OrderType.LIMIT, 0));
 
-        assertThat(book.bestBid()).hasValue(9998);
+        assertThat(book.bestBid()).isEqualTo(9998);
+    }
+
+    // --- peekBest ---
+
+    @Test
+    void shouldPeekNothingOnAnEmptySide() {
+        book.addOrder(buy(9998, 200));
+
+        assertThat(book.peekBest(Side.SELL)).isEmpty();
+    }
+
+    @Test
+    void shouldPeekTheOrderAtTheBestPrice() {
+        book.addOrder(buy(9998, 200));
+        Order best = buy(10001, 50);
+        book.addOrder(best);
+
+        assertThat(book.peekBest(Side.BUY)).containsSame(best);
+    }
+
+    @Test
+    void shouldPeekTheEarliestOrderWhenSeveralRestAtTheBestPrice() {
+        Order first = buy(10001, 50);
+        book.addOrder(first);
+        book.addOrder(buy(10001, 75));
+
+        assertThat(book.peekBest(Side.BUY)).containsSame(first);
+    }
+
+    @Test
+    void shouldNotRemoveTheOrderWhenPeeking() {
+        book.addOrder(buy(10001, 50));
+
+        book.peekBest(Side.BUY);
+
+        assertThat(book.bidDepth(5)).containsExactly(new DepthLevel(10001, 50));
+    }
+
+    // --- removeOrder ---
+
+    @Test
+    void shouldRemoveAFilledOrderFromBothTheLevelAndTheIndex() {
+        Order order = buy(10001, 50);
+        book.addOrder(order);
+
+        book.removeOrder(order.getOrderId());
+
+        assertThat(book.bestBid()).isEqualTo(OrderBook.NO_PRICE);
+        // the id is free again, which only holds if the index was cleaned up too
+        book.addOrder(new Order(1, order.getOrderId(), 9998, 100, Side.BUY, OrderType.LIMIT, 0));
+        assertThat(book.bestBid()).isEqualTo(9998);
     }
 
     // --- fixtures ---

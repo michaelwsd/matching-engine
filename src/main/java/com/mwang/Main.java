@@ -7,7 +7,6 @@ import com.mwang.model.OrderType;
 import com.mwang.model.Side;
 
 import java.util.List;
-import java.util.OptionalLong;
 
 /**
  * Builds an order book from a hardcoded set of orders and prints its depth.
@@ -30,7 +29,10 @@ public class Main {
         book.addOrder(limit(1, nextOrderId++, Side.BUY, 10001, 50));
         book.addOrder(limit(2, nextOrderId++, Side.BUY, 9998, 200));
         book.addOrder(limit(3, nextOrderId++, Side.BUY, 9998, 100));
-        book.addOrder(limit(1, nextOrderId++, Side.BUY, 9997, 500));
+        book.addOrder(limit(1, nextOrderId++, Side.BUY, 9996, 500));
+        book.addOrder(limit(1, nextOrderId++, Side.BUY, 9995, 500));
+        book.addOrder(limit(1, nextOrderId++, Side.BUY, 9994, 500));
+        book.addOrder(limit(1, nextOrderId++, Side.BUY, 9993, 500));
 
         // Asks.
         book.addOrder(limit(4, nextOrderId++, Side.SELL, 10002, 300));
@@ -108,16 +110,13 @@ public class Main {
     }
 
     private static void printSummary(OrderBook book) {
-        OptionalLong bestBid = book.bestBid();
-        OptionalLong bestAsk = book.bestAsk();
+        long bid = book.bestBid();
+        long ask = book.bestAsk();
 
-        if (bestBid.isEmpty() || bestAsk.isEmpty()) {
+        if (bid == OrderBook.NO_PRICE || ask == OrderBook.NO_PRICE) {
             System.out.println("  book is one-sided or empty - no spread");
             return;
         }
-
-        long bid = bestBid.getAsLong();
-        long ask = bestAsk.getAsLong();
 
         System.out.printf("  best bid %s    best ask %s    spread %s%n",
                 formatPrice(bid), formatPrice(ask), formatPrice(ask - bid));
