@@ -1,5 +1,8 @@
 package com.mwang.book;
 
+import com.mwang.exception.InvalidOrderException;
+import com.mwang.exception.OrderException;
+import com.mwang.exception.UnknownOrderException;
 import com.mwang.model.Order;
 import com.mwang.model.OrderType;
 import com.mwang.model.Side;
@@ -9,6 +12,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.InstanceOfAssertFactories.throwable;
 
 class OrderBookTest {
 
@@ -163,7 +167,7 @@ class OrderBookTest {
     @Test
     void shouldRejectCancellingAnUnknownOrderId() {
         assertThatThrownBy(() -> book.cancelOrder(999))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(UnknownOrderException.class)
                 .hasMessageContaining("999");
     }
 
@@ -174,7 +178,7 @@ class OrderBookTest {
         book.cancelOrder(order.getOrderId());
 
         assertThatThrownBy(() -> book.cancelOrder(order.getOrderId()))
-                .isInstanceOf(IllegalStateException.class);
+                .isInstanceOf(UnknownOrderException.class);
     }
 
     // --- add ---
@@ -185,7 +189,7 @@ class OrderBookTest {
 
         assertThatThrownBy(() -> book.addOrder(
                 new Order(1, 42, 9998, 100, Side.BUY, OrderType.LIMIT, 0)))
-                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(InvalidOrderException.class)
                 .hasMessageContaining("42");
     }
 
@@ -201,6 +205,24 @@ class OrderBookTest {
         book.addOrder(new Order(1, 42, 9998, 100, Side.BUY, OrderType.LIMIT, 0));
 
         assertThat(book.bestBid()).isEqualTo(9998);
+    }
+
+    @Test
+    void shouldCarryTheOffendingIdOnAnUnknownOrderException() {
+        assertThatThrownBy(() -> book.cancelOrder(4471))
+                .asInstanceOf(throwable(UnknownOrderException.class))
+                .extracting(UnknownOrderException::getOrderId)
+                .isEqualTo(4471L);
+    }
+
+    /** Both rejection types share a parent, so a gateway can catch one thing. */
+    @Test
+    void shouldReportBothRejectionKindsAsOrderExceptions() {
+        assertThatThrownBy(() -> book.cancelOrder(999)).isInstanceOf(OrderException.class);
+
+        book.addOrder(new Order(1, 7, 10001, 50, Side.BUY, OrderType.LIMIT, 0));
+        assertThatThrownBy(() -> book.addOrder(new Order(1, 7, 9998, 50, Side.BUY, OrderType.LIMIT, 0)))
+                .isInstanceOf(OrderException.class);
     }
 
     // --- peekBest ---

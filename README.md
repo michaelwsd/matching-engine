@@ -11,20 +11,21 @@ system - nothing is thrown away between phases.
 
 ## Status
 
-**Phase 1 complete** - a working limit order book with price-time priority.
+**Phase 2 complete** - a matching engine that crosses orders and produces trades.
 
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Environment & tooling | done |
 | 1 | Core order book | done |
-| 2 | Matching logic | not started |
+| 2 | Matching logic | done |
 | 3 | Concurrency | not started |
 | 3b | Network order entry (TCP) | not started |
 | 4 | Market data & persistence | not started |
 | 5 | Market-making strategy | not started |
 
-Orders rest, cancel and display with correct price-time priority. Nothing crosses yet -
-matching arrives in Phase 2.
+Orders cross, produce trades and rest their remainders, under price-time priority with
+self-trade prevention. Order intake is still single-threaded - concurrency arrives in
+Phase 3.
 
 ## Stack
 
@@ -94,3 +95,21 @@ Decisions worth recording as they are made:
   a caller to ignore. An empty book is a normal state, not an error.
 - **A `HashMap` index from order id to order** gives O(1) cancel. Both it and the price
   maps are mutated only inside `addOrder`/`cancelOrder`, so they cannot drift apart.
+- **Trades execute at the resting order's price**, not the aggressor's. The resting order
+  arrived first and set the terms, so a buyer willing to pay more receives price
+  improvement.
+- **An unfilled market-order remainder is cancelled.** A market order has no price, so
+  there is no price at which it could rest; inventing one would impose terms the client
+  never asked for.
+- **Self-trade prevention cancels the newest.** The incoming order is rejected outright and
+  the resting order keeps its queue position - which is what a market maker with a working
+  quote wants. Trades already executed against other accounts stand.
+- **`OrderBook` exposes `peekBest(Side)` rather than its price levels.** Handing out levels
+  would let a caller remove a filled order without updating the id index, so the engine
+  works in terms of orders and cannot break the book's invariants.
+- **Exceptions split by cause.** Conditions a client can provoke get domain types under a
+  shared `OrderException`, so a gateway can catch one thing and reply with a rejection.
+  Violations of the engine's own invariants stay as plain runtime exceptions and are meant
+  to crash.
+- **No separate `MatchingStrategy` interface.** `MatchingEngine` already provides the swap
+  point a second allocation policy would need; a second interface would be ceremony.

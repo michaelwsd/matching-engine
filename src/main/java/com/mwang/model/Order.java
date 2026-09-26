@@ -1,5 +1,7 @@
 package com.mwang.model;
 
+import com.mwang.exception.InvalidOrderException;
+
 import java.util.Objects;
 
 /**
@@ -39,7 +41,7 @@ public class Order {
      * @param timestamp        arrival time in milliseconds since the Unix epoch. Supplied by the
      *                         caller rather than read from the system clock, so that tests can
      *                         construct orders with controlled arrival times.
-     * @throws IllegalArgumentException if the quantity is not positive, or a limit order has a
+     * @throws InvalidOrderException if the quantity is not positive, or a limit order has a
      *                                  non-positive price
      * @throws NullPointerException     if {@code side} or {@code orderType} is null
      */
@@ -53,10 +55,10 @@ public class Order {
         Objects.requireNonNull(side, "side");
         Objects.requireNonNull(orderType, "orderType");
         if (originalQuantity <= 0) {
-            throw new IllegalArgumentException("order quantity must be positive: " + originalQuantity);
+            throw new InvalidOrderException("order quantity must be positive: " + originalQuantity);
         }
         if (orderType == OrderType.LIMIT && price <= 0) {
-            throw new IllegalArgumentException("price must be positive for a limit order: " + price);
+            throw new InvalidOrderException("price must be positive for a limit order: " + price);
         }
 
         this.accountId = accountId;

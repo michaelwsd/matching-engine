@@ -30,6 +30,28 @@ public class PriceTimeMatchingEngine implements MatchingEngine {
         this.book = Objects.requireNonNull(book, "book");
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Policies applied here, each a deliberate choice rather than an accident of the
+     * implementation:
+     *
+     * <ul>
+     *   <li><b>Execution price is the resting order's price.</b> The resting order arrived
+     *       first and established the terms, so an aggressor willing to pay more receives
+     *       price improvement.
+     *   <li><b>An unfilled limit remainder rests on the book</b> at its own price.
+     *   <li><b>An unfilled market remainder is cancelled.</b> A market order carries no
+     *       price, so there is no price at which it could rest; inventing one would impose
+     *       terms the client never asked for. This is immediate-or-cancel behaviour, and it
+     *       is what most exchanges do.
+     *   <li><b>Self-trade prevention cancels the newest.</b> On reaching a resting order
+     *       from the same account, the incoming order is rejected outright - it neither
+     *       matches further nor rests, and the resting order keeps its queue position. Any
+     *       trades already executed against other accounts stand, because an execution
+     *       cannot be unwound.
+     * </ul>
+     */
     @Override
     public List<Trade> submit(Order incoming) {
         List<Trade> trades = new ArrayList<>();

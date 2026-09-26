@@ -1,5 +1,7 @@
 package com.mwang.book;
 
+import com.mwang.exception.InvalidOrderException;
+import com.mwang.exception.UnknownOrderException;
 import com.mwang.model.Order;
 import com.mwang.model.Side;
 
@@ -47,7 +49,7 @@ public class OrderBook {
     public void addOrder(Order order) {
         long orderId = order.getOrderId();
         if (ordersById.containsKey(orderId)) {
-            throw new IllegalStateException("Order already exists: " + orderId);
+            throw new InvalidOrderException("Order id already in use on this book: " + orderId);
         }
         ordersById.put(orderId, order);
 
@@ -70,12 +72,12 @@ public class OrderBook {
      * and deleting the level if that was its last order. Used both for client cancels and
      * for resting orders the matching engine has filled completely.
      *
-     * @throws IllegalStateException if no such order is on the book
+     * @throws UnknownOrderException if no such order is on the book
      */
     public void removeOrder(long orderId) {
         Order order = ordersById.remove(orderId);
         if (order == null) {
-            throw new IllegalStateException("Order doesn't exist: " + orderId);
+            throw new UnknownOrderException(orderId);
         }
 
         TreeMap<Long, PriceLevel> book = getBook(order);
