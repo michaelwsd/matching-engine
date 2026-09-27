@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
+// without this, two concurrent orders could match the same resting order at once
 public class OrderGateway {
     private static final int CAPACITY = 1000;
     private final BlockingQueue<Order> inbound = new LinkedBlockingQueue<>(CAPACITY);
@@ -27,6 +28,9 @@ public class OrderGateway {
     }
 
     public void submit(Order order) throws InterruptedException {
+        if (!running) {
+            throw new IllegalStateException("gateway is not running");
+        }
         // inserts the order to the queue, if queue is full then wait
         // if interrupted while waiting then throws exception
         inbound.put(order);
@@ -52,7 +56,7 @@ public class OrderGateway {
                 if (order == POISON) break; // if the gateway has shutdown, exit the loop
                 try {
                     engine.submit(order);
-                } catch (OrderException e) { // catch the errors so the matcher won't crash 
+                } catch (OrderException e) { // catch the errors so the matcher won't crash
                     System.err.println("Rejected order " + order.getOrderId() + ": " + e.getMessage());
                 }
             }

@@ -121,6 +121,17 @@ class OrderGatewayTest {
         assertThat(matched).hasValue(2);
     }
 
+    @Test
+    void closedGatewayShouldNotSubmit() {
+        gateway = new OrderGateway(order -> {
+            return List.of();
+        });
+
+        assertThatThrownBy(() -> gateway.submit(buy(1)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not running");
+    }
+
     // --- fixtures ---
 
     private void startWith(MatchingEngine engine) {

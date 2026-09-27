@@ -11,21 +11,21 @@ system - nothing is thrown away between phases.
 
 ## Status
 
-**Phase 2 complete** - a matching engine that crosses orders and produces trades.
+**Phase 3 complete** - concurrent order intake feeding a single-threaded matcher.
 
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Environment & tooling | done |
 | 1 | Core order book | done |
 | 2 | Matching logic | done |
-| 3 | Concurrency | not started |
+| 3 | Concurrency | done |
 | 3b | Network order entry (TCP) | not started |
 | 4 | Market data & persistence | not started |
 | 5 | Market-making strategy | not started |
 
-Orders cross, produce trades and rest their remainders, under price-time priority with
-self-trade prevention. Order intake is still single-threaded - concurrency arrives in
-Phase 3.
+Orders arrive from many threads, are serialised through a queue, and are matched by a
+single thread under price-time priority with self-trade prevention. The engine and book
+are unchanged from Phase 2 and contain no locks.
 
 ## Stack
 
@@ -111,5 +111,19 @@ Decisions worth recording as they are made:
   shared `OrderException`, so a gateway can catch one thing and reply with a rejection.
   Violations of the engine's own invariants stay as plain runtime exceptions and are meant
   to crash.
+- **The engine is not thread-safe, by design.** Concurrency lives at the boundary: many
+  producers put orders on a `BlockingQueue`, and one matcher thread drains it. The engine
+  and book are reachable from that thread only, so they need no locks - which also makes
+  deadlock structurally impossible and keeps price-time priority meaningful.
+- **Shutdown uses a poison pill, not an interrupt.** A sentinel order queues behind
+  everything already accepted, so no order that was acknowledged is ever dropped. An
+  interrupt would wake the matcher immediately and abandon the queue.
+- **A bad order cannot kill the matcher.** `OrderException` is caught per order inside the
+  loop; anything else is a genuine fault and is allowed to propagate. Without that, one
+  malformed order would silently stop all matching while `submit` kept succeeding.
+- **The determinism test constrains its scenario rather than weakening its assertions.**
+  Concurrent arrival order varies between runs, so comparing trade sequences would be
+  flaky. Instead every order shares a price and size with a distinct account, making the
+  outcome ordering-independent and exactly assertable.
 - **No separate `MatchingStrategy` interface.** `MatchingEngine` already provides the swap
   point a second allocation policy would need; a second interface would be ceremony.
