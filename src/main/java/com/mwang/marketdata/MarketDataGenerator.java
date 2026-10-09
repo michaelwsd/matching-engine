@@ -82,7 +82,5 @@ public final class MarketDataGenerator {
         long timestamp = System.currentTimeMillis();
         return new Order(account, nextOrderId++, price, quantity, side, OrderType.LIMIT, timestamp);
     }
-
-    
 }
 
