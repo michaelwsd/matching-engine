@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  Logging configuration. The code decides WHAT to log; this file decides WHERE it goes,
+  HOW it is formatted, and WHETHER it is emitted at all. Changing any of that needs no
+  recompile - Logback reads this file from the classpath at startup.
+
+  APPENDERS
+  An appender is a destination: the console, a file, a socket, a database. Defining one
+  below does nothing on its own - it is an inert, named, configured destination. It is
+  only switched on when something references it by name with <appender-ref>. Logback will
+  warn "Appender named [X] not referenced. Skipping further processing." if you forget.
+
+  PATTERN
+  The conversion words are Logback's own vocabulary, like printf's %s:
+    %d{...}   the time, in the format given
+    %-5level  INFO / WARN / ERROR, padded to 5 so the columns line up
+    %thread   the thread that logged it - valuable here, where "matcher" vs "main"
+              vs a virtual thread tells you a great deal
+    %logger{n}  the logger's name, abbreviated to fit n characters
+    %msg      the message, with its {} placeholders already substituted
+    %n        a newline
+-->
+<configuration>
+
+    <!-- Console: no date, since you can see the clock while watching it run. -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{30} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      File: full timestamp, a new file each day, a week kept, capped overall.
+
+      Rolling matters. An unbounded log file eventually fills the disk, which takes the
+      whole system down rather than just logging. maxHistory bounds the file count and
+      totalSizeCap bounds the total regardless, so one unusually chatty day cannot
+      outgrow the budget.
+    -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>logs/engine.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>logs/engine.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{40} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      <root> is the logger every other logger inherits from, and it does two separate
+      things.
+
+      1. LEVEL - a threshold applied before any appender is consulted. The ranks are:
+
+             TRACE  <  DEBUG  <  INFO  <  WARN  <  ERROR
+                                  ^
+                             threshold
+
+         Calls at or above the threshold are emitted; calls below it are discarded on
+         the spot and never reach an appender. With level=INFO, log.info / log.warn /
+         log.error are written and log.debug / log.trace are thrown away.
+
+         Discarded calls cost an integer comparison, which is why diagnostic logging can
+         be left in the code permanently - and why messages use {} placeholders rather
+         than string concatenation, so the argument is never even formatted when the
+         call is disabled.
+
+         What each level is for in this project:
+             ERROR  the engine is broken and needs a human
+             WARN   suspicious but handled - a rejected order belongs here
+             INFO   significant business events - trades belong here
+             DEBUG  detail for diagnosing a specific problem
+             TRACE  firehose
+
+         The test for whether INFO is right: someone should be able to watch INFO during
+         a run and understand what happened. If it is too noisy to read, it is wrong.
+
+      2. APPENDER-REFS - the destinations that are actually active. Every message that
+         survives the level check goes to all of them.
+
+      CHOOSING A LEVEL
+         Production   INFO. Significant events only, logs stay readable and cheap.
+         Debugging    do not set root to DEBUG - that floods you with every library's
+                      internal chatter. Turn it up for one package instead:
+
+                          <logger name="com.mwang.engine" level="DEBUG"/>
+
+                      The more specific logger wins over root, so only that package
+                      becomes verbose.
+
+         The ${LOG_LEVEL:-INFO} form below lets the level be chosen at launch with
+         -DLOG_LEVEL=DEBUG, so the same build serves both without editing this file.
+    -->
+    <root level="${LOG_LEVEL:-INFO}">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="FILE"/>
+    </root>
+
+</configuration>

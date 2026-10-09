@@ -5,6 +5,8 @@ import com.mwang.exception.OrderException;
 import com.mwang.model.Order;
 import com.mwang.model.OrderType;
 import com.mwang.model.Side;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 import java.util.concurrent.BlockingQueue;
@@ -21,6 +23,8 @@ public class OrderGateway {
     private static final Order POISON = new Order(
             0, -1, 0, 1, Side.BUY, OrderType.MARKET, 0
     );
+    // INFO: trades happening, WARN: rejections, ERROR: something is broken
+    private static final Logger logger = LoggerFactory.getLogger(OrderGateway.class);
 
     public OrderGateway(MatchingEngine engine) {
         // we can take any engine and submit order to this engine
@@ -57,7 +61,7 @@ public class OrderGateway {
                 try {
                     engine.submit(order);
                 } catch (OrderException e) { // catch the errors so the matcher won't crash
-                    System.err.println("Rejected order " + order.getOrderId() + ": " + e.getMessage());
+                    logger.warn("Rejected order {}: {}", order.getOrderId(), e.getMessage());
                 }
             }
         } catch (InterruptedException e) {
@@ -74,7 +78,7 @@ public class OrderGateway {
             matcher.join(5000); // wait up to 5 seconds for the matcher thread to finish
 
             if (matcher.isAlive()) {
-                System.err.println("matcher did not stop within 5s");
+                logger.error("matcher did not stop within 5s");
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
