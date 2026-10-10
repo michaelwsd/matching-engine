@@ -8,6 +8,8 @@ import com.mwang.engine.MatchingEngine;
 import com.mwang.engine.PriceTimeMatchingEngine;
 import com.mwang.gateway.MatchListener;
 import com.mwang.gateway.OrderGateway;
+import com.mwang.feed.BookFeedServer;
+import com.mwang.feed.MarketDataSnapshot;
 import com.mwang.marketdata.MarketDataGenerator;
 import com.mwang.marketdata.MidPriceWalk;
 import com.mwang.marketdata.OrderFlowDriver;
@@ -53,6 +55,9 @@ public class Main {
 
     /** Where the audit trail is appended. Not in src/, and target/ is already gitignored. */
     private static final Path TRADE_LOG = Path.of("logs", "trades.csv");
+
+    /** 0 would let the OS choose; a fixed port is friendlier to curl. */
+    private static final int FEED_PORT = 8080;
 
     private static final Duration RUN_DURATION = Duration.ofSeconds(20);
     private static final Duration REFRESH = Duration.ofMillis(200);
@@ -122,6 +127,14 @@ public class Main {
                 walk, QUOTE_OFFSET, MIN_QUANTITY, MAX_QUANTITY, ACCOUNT_COUNT, GENERATOR_SEED);
         OrderFlowDriver driver = new OrderFlowDriver(generator, gateway, DRIVER_SEED);
 
+        // Reads the same published reference the renderer does - one get(), so the sequence
+        // and the depth it reports come from the same moment.
+        BookFeedServer feedServer = new BookFeedServer(FEED_PORT, () -> {
+            Status status = latest.get();
+            return MarketDataSnapshot.from(status.book(), status.orders(),
+                    System.currentTimeMillis());
+        });
+
         printConfiguration();
 
         // Start forwards, each consumer before its producer: the trade log must be open
@@ -129,6 +142,7 @@ public class Main {
         tradeLogger.start();
         gateway.start();
         driver.start();
+        feedServer.start();
 
         try {
             if (INTERACTIVE) {
@@ -149,6 +163,7 @@ public class Main {
         // nothing is still submitting while the gateway drains; the trade log last, so the
         // matcher's final trades still have somewhere to go.
         long shutdownStart = System.nanoTime();
+        feedServer.close();
         driver.stop();
         gateway.shutdown();
         tradeLogger.close();
@@ -293,6 +308,7 @@ public class Main {
         System.out.printf("  order size       %14s%n", MIN_QUANTITY + " - " + MAX_QUANTITY);
         System.out.printf("  accounts         %14d%n", ACCOUNT_COUNT);
         System.out.printf("  duration         %14s%n", RUN_DURATION.toSeconds() + "s");
+        System.out.printf("  book feed        %14s%n", "localhost:" + FEED_PORT + "/book");
         System.out.println();
     }
 
