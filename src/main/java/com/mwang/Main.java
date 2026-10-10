@@ -1,5 +1,6 @@
 package com.mwang;
 
+import com.mwang.audit.TradeLogger;
 import com.mwang.book.BookSnapshot;
 import com.mwang.book.DepthLevel;
 import com.mwang.book.OrderBook;
@@ -11,6 +12,8 @@ import com.mwang.marketdata.MarketDataGenerator;
 import com.mwang.marketdata.MidPriceWalk;
 import com.mwang.marketdata.OrderFlowDriver;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +59,9 @@ public class Main {
     private static final int MIN_QUANTITY = 10;
     private static final int MAX_QUANTITY = 100;
     private static final int ACCOUNT_COUNT = 8;
+
+    /** Where the audit trail is appended. Not in src/, and target/ is already gitignored. */
+    private static final Path TRADE_LOG = Path.of("logs", "trades.csv");
 
     private static final Duration RUN_DURATION = Duration.ofSeconds(20);
     private static final Duration REFRESH = Duration.ofMillis(200);
@@ -108,7 +114,7 @@ public class Main {
     private static final Status EMPTY = new Status(
             new BookSnapshot(List.of(), List.of(), OrderBook.NO_PRICE, OrderBook.NO_PRICE), 0, 0);
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) throws InterruptedException, IOException {
         OrderBook book = new OrderBook();
         MatchingEngine engine = new PriceTimeMatchingEngine(book);
 
@@ -117,13 +123,18 @@ public class Main {
         // Runs on the matcher thread, so it may read the book; it publishes only an immutable
         // snapshot. Deliberately does no I/O - every microsecond here is one the exchange
         // spends not matching.
+        // The lambda function will match the abstract method, as there is only one abstract method
         MatchListener publishSnapshot = (order, trades) -> {
             Status previous = latest.get();
             latest.set(new Status(book.snapshot(DEPTH_LEVELS),
                     previous.orders() + 1, previous.trades() + trades.size()));
         };
 
-        OrderGateway gateway = new OrderGateway(engine, publishSnapshot);
+        // Both listeners run on the matcher thread, in this order. The audit log goes first:
+        // if the display code ever throws, the trade has already been recorded.
+        TradeLogger tradeLogger = new TradeLogger(TRADE_LOG);
+        // allows onMatch to be called on both logger and snapshot
+        OrderGateway gateway = new OrderGateway(engine, tradeLogger.andThen(publishSnapshot));
 
         MidPriceWalk walk = new MidPriceWalk(REFERENCE_MID, TICK_STEP, MAX_DEVIATION, WALK_SEED);
         MarketDataGenerator generator = new MarketDataGenerator(
@@ -132,8 +143,9 @@ public class Main {
 
         printConfiguration();
 
-        // Start forwards: the consumer must be ready before anything is produced, or the
-        // producer's first submit() hits a gateway that is not running.
+        // Start forwards, each consumer before its producer: the trade log must be open
+        // before a trade can occur, and the matcher running before an order is submitted.
+        tradeLogger.start();
         gateway.start();
         driver.start();
 
@@ -152,11 +164,13 @@ public class Main {
             }
         }
 
-        // Stop backwards: the producer first, so nothing is still submitting when the gateway
-        // sends its poison pill and drains.
+        // Stop backwards, in the exact reverse of the start order. The producer first, so
+        // nothing is still submitting while the gateway drains; the trade log last, so the
+        // matcher's final trades still have somewhere to go.
         long shutdownStart = System.nanoTime();
         driver.stop();
         gateway.shutdown();
+        tradeLogger.close();
         long shutdownMillis = (System.nanoTime() - shutdownStart) / 1_000_000;
 
         // The matcher thread has been joined, so reading the book directly is now safe.
@@ -164,7 +178,9 @@ public class Main {
         draw(frame(new Status(book.snapshot(DEPTH_LEVELS), finalStatus.orders(),
                 finalStatus.trades()), RUN_DURATION.toSeconds(), "final"), false);
 
-        System.out.printf("%n  shut down cleanly in %dms%n%n", shutdownMillis);
+        System.out.printf("%n  shut down cleanly in %dms%n", shutdownMillis);
+        System.out.printf("  %,d trades written to %s%s%n%n", tradeLogger.written(), TRADE_LOG,
+                tradeLogger.dropped() > 0 ? "  (" + tradeLogger.dropped() + " DROPPED)" : "");
     }
 
     private static void runAndRender(AtomicReference<Status> latest) throws InterruptedException {

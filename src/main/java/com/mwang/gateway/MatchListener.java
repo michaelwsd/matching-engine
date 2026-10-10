@@ -4,6 +4,7 @@ import com.mwang.model.Order;
 import com.mwang.model.Trade;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Notified after the engine has processed each order.
@@ -28,4 +29,28 @@ public interface MatchListener {
      * @param trades the trades it produced, empty when it rested or was rejected
      */
     void onMatch(Order order, List<Trade> trades);
+
+    /**
+     * Returns a listener that runs this one and then {@code next}, in that order.
+     *
+     * <p>The gateway holds a single listener, so this is how several are attached. Mirrors
+     * {@link java.util.function.Consumer#andThen}.
+     *
+     * <p>Note the failure behaviour: if the first listener throws, the second is skipped for
+     * that order. The gateway catches and logs it, so the matcher survives, but one broken
+     * listener does deprive the others of that notification. Put the one whose record matters
+     * most - the audit log - first.
+     */
+    default MatchListener andThen(MatchListener next) {
+        Objects.requireNonNull(next, "next");
+        return (order, trades) -> {
+            // "this" is the listener andThen was called on, so for
+            // tradeLogger.andThen(publishSnapshot) the line below is tradeLogger.onMatch(...).
+            // Spelled out because the implicit receiver makes the call easy to miss. Note that
+            // inside a LAMBDA "this" is the enclosing instance; in an anonymous class it would
+            // be the anonymous object instead, and this method would recurse forever.
+            this.onMatch(order, trades);
+            next.onMatch(order, trades);
+        };
+    }
 }

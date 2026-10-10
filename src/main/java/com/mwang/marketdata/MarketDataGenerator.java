@@ -72,7 +72,7 @@ public final class MarketDataGenerator {
         this(walk, maxOffset, minQuantity, maxQuantity, accountCount, new Random().nextLong());
     }
 
-    /**Generate a simulated order.**/
+    /** Generate a simulated order. **/
     public Order nextOrder() {
         long mid = walk.next(); // advance the walk
         Side side = Side.values()[random.nextInt(2)];
