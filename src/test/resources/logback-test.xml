@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logging configuration used ONLY during tests.
+
+  Logback picks this up ahead of src/main/resources/logback.xml whenever the test classpath
+  is in play, so running the suite cannot touch logs/engine.log. Without it, every negative
+  test writes its deliberate WARN and ERROR lines into the real log file, and the next time
+  you open that file to investigate something you are reading failures that were on purpose.
+
+  Console only, no file appender, and nothing rolls.
+
+  Some lines you see here are EXPECTED. These tests deliberately provoke them:
+    OrderGatewayTest.shouldSurviveAListenerThatThrows       ERROR "Listener failed on order N"
+    OrderGatewayTest.shouldNotCrashTheMatcher...            WARN  "Rejected order N"
+  A green build with WARN or ERROR lines in its output is still a green build - read the
+  "Tests run" summary at the end, not the colour of the text above it.
+-->
+<configuration>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <!-- Shorter than the production pattern: no date, since a test run is seconds long -->
+            <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{0} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!--
+      WARN rather than INFO: tests should be quiet unless something is worth reading, and
+      lifecycle chatter from a hundred gateway start/stop cycles is not. Raise this to DEBUG
+      temporarily when diagnosing a specific failing test.
+    -->
+    <root level="WARN">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+
+</configuration>

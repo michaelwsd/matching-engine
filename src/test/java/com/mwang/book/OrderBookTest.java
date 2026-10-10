@@ -276,6 +276,69 @@ class OrderBookTest {
         assertThat(book.bestBid()).isEqualTo(9998);
     }
 
+    // --- snapshot ---
+
+    @Test
+    void shouldCaptureBothSidesAndTheBestPricesInASnapshot() {
+        book.addOrder(buy(9998, 200));
+        book.addOrder(buy(9997, 500));
+        book.addOrder(sell(10002, 300));
+
+        BookSnapshot snapshot = book.snapshot(5);
+
+        assertThat(snapshot.bids()).containsExactly(
+                new DepthLevel(9998, 200), new DepthLevel(9997, 500));
+        assertThat(snapshot.asks()).containsExactly(new DepthLevel(10002, 300));
+        assertThat(snapshot.bestBid()).isEqualTo(9998);
+        assertThat(snapshot.bestAsk()).isEqualTo(10002);
+        assertThat(snapshot.hasBothSides()).isTrue();
+    }
+
+    @Test
+    void shouldReportAnEmptyBookSnapshotAsOneSided() {
+        book.addOrder(buy(9998, 200));
+
+        BookSnapshot snapshot = book.snapshot(5);
+
+        assertThat(snapshot.asks()).isEmpty();
+        assertThat(snapshot.bestAsk()).isEqualTo(OrderBook.NO_PRICE);
+        assertThat(snapshot.hasBothSides()).isFalse();
+    }
+
+    @Test
+    void shouldLimitSnapshotDepthToTheRequestedLevels() {
+        book.addOrder(buy(10001, 50));
+        book.addOrder(buy(9998, 200));
+        book.addOrder(buy(9997, 500));
+
+        assertThat(book.snapshot(2).bids()).hasSize(2);
+    }
+
+    /**
+     * The point of a snapshot is that it can be handed to another thread. That only holds if
+     * later changes to the book cannot reach it.
+     */
+    @Test
+    void shouldNotChangeWhenTheBookChangesAfterwards() {
+        Order resting = buy(9998, 200);
+        book.addOrder(resting);
+        BookSnapshot snapshot = book.snapshot(5);
+
+        book.cancelOrder(resting.getOrderId());
+        book.addOrder(buy(10001, 50));
+
+        assertThat(snapshot.bids()).containsExactly(new DepthLevel(9998, 200));
+        assertThat(snapshot.bestBid()).isEqualTo(9998);
+    }
+
+    @Test
+    void shouldReturnSnapshotListsThatCallersCannotModify() {
+        book.addOrder(buy(10001, 50));
+
+        assertThatThrownBy(() -> book.snapshot(5).bids().add(new DepthLevel(1, 1)))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
     // --- fixtures ---
 
     private Order buy(long price, int quantity) {

@@ -5,9 +5,12 @@ import com.mwang.exception.InvalidOrderException;
 import com.mwang.model.Order;
 import com.mwang.model.OrderType;
 import com.mwang.model.Side;
+import com.mwang.model.Trade;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -130,6 +133,86 @@ class OrderGatewayTest {
         assertThatThrownBy(() -> gateway.submit(buy(1)))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not running");
+    }
+
+    // --- listener ---
+
+    @Test
+    void shouldNotifyTheListenerOfEachOrderAndItsTrades() throws Exception {
+        Trade trade = new Trade(1, 2, 10000, 10, 0);
+        List<Order> seenOrders = Collections.synchronizedList(new ArrayList<>());
+        List<Trade> seenTrades = Collections.synchronizedList(new ArrayList<>());
+        CountDownLatch notified = new CountDownLatch(1);
+
+        gateway = new OrderGateway(order -> List.of(trade), (order, trades) -> {
+            seenOrders.add(order);
+            seenTrades.addAll(trades);
+            notified.countDown();
+        });
+        gateway.start();
+
+        Order submitted = buy(1);
+        gateway.submit(submitted);
+
+        assertThat(notified.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(seenOrders).containsExactly(submitted);
+        assertThat(seenTrades).containsExactly(trade);
+    }
+
+    /** A rejected order still happened, so the listener hears about it with no trades. */
+    @Test
+    void shouldNotifyTheListenerWithNoTradesWhenTheEngineRejectsTheOrder() throws Exception {
+        CountDownLatch notified = new CountDownLatch(1);
+        List<Trade> seenTrades = Collections.synchronizedList(new ArrayList<>());
+
+        gateway = new OrderGateway(
+                order -> { throw new InvalidOrderException("rejected"); },
+                (order, trades) -> {
+                    seenTrades.addAll(trades);
+                    notified.countDown();
+                });
+        gateway.start();
+
+        gateway.submit(buy(1));
+
+        assertThat(notified.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(seenTrades).isEmpty();
+    }
+
+    /**
+     * The listener is caller-supplied and runs on the matcher thread, so an exception from it
+     * would otherwise propagate out of the match loop and kill the matcher - silently, since
+     * nothing joins that thread until shutdown. Every subsequent order would queue up forever.
+     */
+    @Test
+    void shouldSurviveAListenerThatThrows() throws Exception {
+        AtomicInteger processed = new AtomicInteger();
+        CountDownLatch allSeen = new CountDownLatch(3);
+
+        gateway = new OrderGateway(
+                order -> {
+                    processed.incrementAndGet();
+                    allSeen.countDown();
+                    return List.of();
+                },
+                (order, trades) -> { throw new IllegalStateException("listener is broken"); });
+        gateway.start();
+
+        gateway.submit(buy(1));
+        gateway.submit(buy(2));
+        gateway.submit(buy(3));
+
+        assertThat(allSeen.await(2, TimeUnit.SECONDS))
+                .as("the matcher must keep processing after a listener blows up")
+                .isTrue();
+        assertThat(processed).hasValue(3);
+    }
+
+    @Test
+    void shouldRejectANullListener() {
+        assertThatThrownBy(() -> new OrderGateway(order -> List.of(), null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("listener");
     }
 
     // --- fixtures ---

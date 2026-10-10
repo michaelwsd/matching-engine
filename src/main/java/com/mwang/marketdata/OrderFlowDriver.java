@@ -137,7 +137,7 @@ public final class OrderFlowDriver {
             return;
         }
         running = false;
-        producer.interrupt();
+        producer.interrupt(); // interrupts the producer thread in case of submitting an order
 
         try {
             producer.join(SHUTDOWN_TIMEOUT_MILLIS);

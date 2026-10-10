@@ -118,4 +118,18 @@ public class OrderBook {
     public List<DepthLevel> askDepth(int level) {
         return getDepth(Side.SELL, level);
     }
+
+    /**
+     * An immutable view of the top of the book, safe to hand to another thread.
+     *
+     * <p>Must be called from the thread that owns this book - the matcher - because it walks
+     * the same structures that {@code addOrder} and {@code removeOrder} mutate. What makes it
+     * useful is that the <em>result</em> is safe to publish anywhere, so a reader never needs
+     * a reference to the book itself.
+     *
+     * @param levels how many price levels to include per side
+     */
+    public BookSnapshot snapshot(int levels) {
+        return new BookSnapshot(bidDepth(levels), askDepth(levels), bestBid(), bestAsk());
+    }
 }
