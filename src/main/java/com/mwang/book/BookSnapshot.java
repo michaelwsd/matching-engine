@@ -3,14 +3,11 @@ package com.mwang.book;
 import java.util.List;
 
 /**
- * An immutable picture of one side-by-side view of the book at a moment in time.
+ * An immutable view of the top of the book, safe to hand to another thread.
  *
- * <p>Exists so that the book itself never crosses a thread boundary. {@link OrderBook} is not
- * thread-safe and is confined to the matcher thread; a reader on another thread that walked its
- * {@code TreeMap}s could get a {@code ConcurrentModificationException} or, worse, a
- * plausible-looking view stitched from two inconsistent reads - a crossed book that never
- * existed. The matcher builds one of these between two orders, when the book is quiet, and
- * publishes it. Readers then hold a value that cannot change under them.
+ * <p>Exists so the book itself never crosses a thread boundary. {@link OrderBook} is confined
+ * to the matcher thread; the matcher builds one of these between two orders, when the book is
+ * quiet, and publishes it. Readers then hold a value that cannot change under them.
  *
  * @param bids    aggregated depth, best price first
  * @param asks    aggregated depth, best price first
@@ -21,9 +18,8 @@ public record BookSnapshot(List<DepthLevel> bids, List<DepthLevel> asks,
                            long bestBid, long bestAsk) {
 
     /**
-     * A record's generated constructor copies references, not contents, so a record holding a
-     * mutable list is not itself immutable. {@link List#copyOf} makes defensive, unmodifiable
-     * copies, which is what lets this be shared across threads safely.
+     * Copies the lists defensively: a record holding a mutable list is not itself immutable,
+     * and that immutability is what makes this safe to share across threads.
      */
     public BookSnapshot {
         bids = List.copyOf(bids);

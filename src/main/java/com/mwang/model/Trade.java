@@ -1,18 +1,14 @@
 package com.mwang.model;
 
 /**
- * A completed execution between two orders.
+ * A completed execution between two orders. A historical fact that can never change, which is
+ * why it is a record rather than a class.
  *
- * <p>A trade is a historical fact: once it has happened, nothing about it can change. That
- * makes it a value rather than an entity, which is why it is a record - two trades with
- * identical components are the same trade.
- *
- * @param buyOrderId  the resting or incoming order on the buy side
- * @param sellOrderId the resting or incoming order on the sell side
- * @param price       execution price in ticks, where one tick is one cent, so {@code 10001}
- *                    means $100.01. This is the <em>resting</em> order's price, not the
- *                    aggressor's: the resting order was there first and established the terms,
- *                    so an aggressive buyer willing to pay more receives price improvement.
+ * @param buyOrderId  the order on the buy side
+ * @param sellOrderId the order on the sell side
+ * @param price       execution price in ticks, one tick being one cent. This is the
+ *                    <em>resting</em> order's price: it was there first and set the terms, so
+ *                    an aggressor willing to pay more receives price improvement.
  * @param quantity    the quantity exchanged, always positive
  * @param timestamp   execution time in milliseconds since the Unix epoch
  */

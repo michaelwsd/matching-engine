@@ -9,35 +9,25 @@ import java.util.Objects;
 import java.util.Random;
 
 /**
- * Drives synthetic order flow into an {@link OrderGateway} from a dedicated producer thread.
+ * Generates synthetic orders on its own thread and submits them to an {@link OrderGateway}.
  *
- * <p>Sits at the opposite end of the gateway's queue from its matcher thread: this class is the
- * producer, the matcher is the consumer, and the gateway's {@code BlockingQueue} is the only
- * thread boundary in the pipeline. This class holds no queue of its own.
+ * <p>The producer end of the pipeline; the gateway's matcher thread is the consumer, and the
+ * gateway's queue is the only thread boundary. This class holds no queue of its own.
  *
- * <p>Orders are paced by a uniformly random delay in {@code [0, MAX_DELAY_MILLIS)}, giving a
- * mean of roughly 20ms and so about 50 orders per second. That is a ceiling rather than a
- * guarantee: {@link OrderGateway#submit(com.mwang.model.Order)} blocks when the queue is full,
- * so if the matcher falls behind, the producer is paced by the matcher instead. Real order flow
- * is bursty rather than evenly spaced, which an exponential delay would model; a uniform draw
- * is used here because it keeps the demo legible.
+ * <p>Orders are paced by a uniformly random delay below {@code MAX_DELAY_MILLIS}, giving
+ * roughly 50 per second. That is a ceiling, not a guarantee: if the matcher falls behind, the
+ * gateway's {@code submit} blocks and the producer is paced by the matcher instead.
  *
- * <p>{@link #start()} and {@link #stop()} are safe to call from different threads, so a JVM
- * shutdown hook may call {@code stop()} while the main thread is still starting up. The
- * generator, however, is confined to the producer thread - never share one generator between
- * two drivers, because {@code nextOrderId} is incremented without synchronisation.
+ * <p>{@link #start()} and {@link #stop()} may be called from different threads, so a JVM
+ * shutdown hook can stop this while the main thread is still starting up. The generator,
+ * however, is confined to the producer thread - never share one between two drivers.
  *
- * <p><strong>Shutdown order matters.</strong> Call {@code stop()} on this driver before
- * {@link OrderGateway#shutdown()}. The reverse order leaves the producer submitting to a
- * stopped gateway, which rejects it with an {@link IllegalStateException}.
+ * <p><strong>Call {@code stop()} before {@link OrderGateway#shutdown()}.</strong> The reverse
+ * order leaves the producer submitting to a stopped gateway, which rejects it.
  */
 public final class OrderFlowDriver {
 
-    /**
-     * Upper bound, exclusive, on the pause taken after each order. A uniform draw over
-     * {@code [0, 40)} has a mean of 20ms, so the flow runs at roughly 50 orders per second -
-     * slow enough to watch a book build up and trade.
-     */
+    /** Exclusive upper bound on the pause after each order; a uniform draw averages half it. */
     private static final long MAX_DELAY_MILLIS = 40;
 
     /** How long {@link #stop()} waits for the producer to finish before giving up on it. */
@@ -52,19 +42,16 @@ public final class OrderFlowDriver {
     private Thread producer;
 
     /**
-     * Whether the producer should keep generating. Written by {@link #stop()} and read by the
-     * producer thread, so it is {@code volatile} rather than guarded by this object's monitor -
-     * if the producer needed the monitor, {@code stop()} holding it across
-     * {@link Thread#join(long)} would deadlock.
+     * Whether to keep generating. Written by {@link #stop()}, read by the producer thread, so
+     * {@code volatile} rather than monitor-guarded - if the producer needed this object's
+     * monitor, {@code stop()} holding it across {@link Thread#join(long)} would deadlock.
      */
     private volatile boolean running;
 
     /**
-     * @param generator supplies the orders to submit; must not be shared with another driver
-     * @param gateway   receives the orders; must already be started before {@link #start()}
-     * @param seed      seed for the pacing draws only. Deliberately separate from the
-     *                  generator's and the walk's seeds, so that changing the pacing does not
-     *                  disturb the order sequence.
+     * @param generator supplies the orders; must not be shared with another driver
+     * @param gateway   receives them; must already be started before {@link #start()}
+     * @param seed      seeds the pacing draws only, separately from the generator and the walk
      * @throws NullPointerException if {@code generator} or {@code gateway} is null
      */
     public OrderFlowDriver(MarketDataGenerator generator, OrderGateway gateway, long seed) {
@@ -76,8 +63,7 @@ public final class OrderFlowDriver {
     /**
      * Starts the producer thread.
      *
-     * @throws IllegalStateException if this driver has already been started. A driver is not
-     *                               restartable: once stopped, build a new one.
+     * @throws IllegalStateException if already started. A driver is not restartable.
      */
     public synchronized void start() {
         if (producer != null) {
@@ -92,16 +78,10 @@ public final class OrderFlowDriver {
     /**
      * Generates orders until asked to stop.
      *
-     * <p>{@code while (running)} is the right shape here, where the same construct was a bug in
-     * the gateway's matcher. A consumer can have a backlog, so it must keep draining until it
-     * reads a sentinel positioned after the last real order. A producer is the source: when it
-     * stops producing there is nothing left over, so a flag is appropriate.
-     *
-     * <p>In practice the flag is belt-and-braces: {@link #stop()} always interrupts, and both
-     * blocking calls in this loop throw on interruption, so the exception is the exit path that
-     * actually fires. Removing this condition breaks no test. It is kept because a loop with no
-     * stop condition is harder to reason about, and because it would become the only exit if a
-     * non-interruptible call were ever added here.
+     * <p>{@code while (running)} is right here where the same construct was a bug in the
+     * gateway's matcher: a consumer has a backlog to drain first, a producer does not. In
+     * practice the flag is belt-and-braces, since {@link #stop()} always interrupts and both
+     * blocking calls below throw on interruption.
      */
     private void producerLoop() {
         try {
@@ -118,19 +98,16 @@ public final class OrderFlowDriver {
     }
 
     /**
-     * Stops the producer and waits for its thread to finish. Returns immediately if the driver
-     * was never started, or has already been stopped.
+     * Stops the producer and waits for its thread. Returns immediately if never started, or
+     * already stopped.
      *
-     * <p>Clearing the flag is not sufficient on its own. The producer may be parked inside
-     * {@code put()} waiting for a queue slot that will never free, in which case it is not
-     * executing this loop and will never see the flag change. Interruption is the only way to
-     * wake a thread out of a blocking call, and unlike the gateway's matcher there is no
-     * poison-pill option here: nothing feeds a producer, so nothing can be sent to it.
+     * <p>The flag alone is not enough: the producer may be parked inside {@code put()} waiting
+     * for a queue slot that will never free, where it is not running this loop and will never
+     * see the flag change. Interruption is the only way to wake it, and unlike the gateway's
+     * matcher there is no poison-pill option - nothing feeds a producer.
      *
-     * <p>The order being submitted when the interrupt lands is discarded, because
-     * {@code put()} throws instead of enqueuing it. That is acceptable for synthetic flow. A
-     * real gateway taking client orders would use {@code offer()} and reject explicitly rather
-     * than blocking in the first place.
+     * <p>The order being submitted when the interrupt lands is discarded, which is acceptable
+     * for synthetic flow. A real gateway would use {@code offer()} and reject explicitly.
      */
     public synchronized void stop() {
         if (!running) {

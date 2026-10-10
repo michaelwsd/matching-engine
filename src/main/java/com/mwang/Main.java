@@ -20,30 +20,21 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Runs a synthetic market and redraws the order book live as orders are matched.
+ * Runs a synthetic market for a fixed duration, redrawing the order book as it goes.
  *
- * <p>Wires the whole pipeline together: a bounded random walk supplies a mid price, a generator
- * turns each mid into an order, a driver pushes those orders into the gateway from its own
- * thread, and the gateway's single matcher thread feeds them to the matching engine.
+ * <p>Wires the pipeline together: a random walk supplies a mid price, a generator turns each
+ * mid into an order, a driver pushes those into the gateway from its own thread, and the
+ * gateway's single matcher thread feeds them to the engine.
  *
- * <h2>How the live view stays safe</h2>
+ * <p>The book is never read from here. It is confined to the matcher thread, so instead a
+ * {@link MatchListener} - which the gateway invokes <em>on that thread</em> - builds an
+ * immutable {@link BookSnapshot} and publishes it through an {@link AtomicReference}. This
+ * class only ever reads that reference, so no lock is needed and no half-updated book can be
+ * rendered. The snapshot is built on the matcher thread because only that thread may touch the
+ * book, and rendered here because terminal I/O is slow.
  *
- * <p>{@link OrderBook} is not thread-safe and is confined to the matcher thread. This class
- * never reads it from {@code main} while the simulation is running. Instead it installs a
- * {@link MatchListener}, which the gateway invokes <em>on the matcher thread</em> after each
- * order. The listener is therefore inside the confinement and may walk the book; it builds an
- * immutable {@link BookSnapshot} and publishes it through an {@link AtomicReference}.
- *
- * <p>{@code main} then only ever reads that reference. It holds a value that cannot change
- * under it, so there is no lock, no copying of live structures, and no possibility of rendering
- * a crossed book that never actually existed.
- *
- * <p>Note what the division of labour buys: the snapshot is <em>built</em> on the matcher thread
- * because only that thread may touch the book, but it is <em>rendered</em> on the main thread
- * because terminal output is slow and the matcher must not wait for it.
- *
- * <p>All output here goes to {@code System.out} deliberately: this is the demo's user interface,
- * not diagnostics. Logging goes through SLF4J from inside the components.
+ * <p>Output goes to {@code System.out} deliberately: this is the demo's user interface, not
+ * diagnostics. Components log through SLF4J.
  */
 public class Main {
 
@@ -66,11 +57,7 @@ public class Main {
     private static final Duration RUN_DURATION = Duration.ofSeconds(20);
     private static final Duration REFRESH = Duration.ofMillis(200);
 
-    /**
-     * Fixed seeds so that a run can be reproduced. Three separate ones, because the walk, the
-     * order generator and the pacing draw independently: changing the pacing must not disturb
-     * the price sequence.
-     */
+    /** Three separate seeds, so changing the pacing does not disturb the price sequence. */
     private static final long WALK_SEED = 42;
     private static final long GENERATOR_SEED = 7;
     private static final long DRIVER_SEED = 99;
@@ -82,18 +69,12 @@ public class Main {
     private static final String SHOW_CURSOR = "\u001B[?25h";
 
     /**
-     * Whether output is going to a real terminal, which is what decides how this renders.
+     * Whether output is a real terminal, which decides how this renders. Redrawing in place
+     * needs ANSI cursor codes; piped output, CI logs and IntelliJ's plain run console ignore
+     * them, so there we print an occasional snapshot and emit no escapes at all.
      *
-     * <p>Redrawing in place means moving the cursor back up over the previous frame with an
-     * ANSI escape, and that only works on something that understands ANSI. Piped output, a CI
-     * log, and IntelliJ's plain run console do not: there the escapes are ignored or printed
-     * literally, and every frame simply scrolls. So when there is no terminal, this falls back
-     * to printing an occasional snapshot and emits no escapes at all.
-     *
-     * <p>{@code System.console()} returns null when stdout is redirected; {@code isTerminal()}
-     * is the Java 22 refinement for the case where it does not. Detection is never perfectly
-     * reliable, so {@code -Dsimulation.ansi=true|false} overrides it, the same escape hatch
-     * that command line tools offer as {@code --color=always}.
+     * <p>Detection is never perfectly reliable, so {@code -Dsimulation.ansi=true|false}
+     * overrides it, the same escape hatch as {@code --color=always}.
      */
     private static final boolean INTERACTIVE = detectInteractive();
 
@@ -213,13 +194,9 @@ public class Main {
     /**
      * Redraws a frame in place by moving the cursor back up over the previous one.
      *
-     * <p>Every frame has the same number of lines - empty depth rows are padded rather than
-     * omitted - so the cursor always lands where the frame began. Each line is followed by an
-     * erase-to-end-of-line, so a short line cannot leave debris from a longer predecessor. The
-     * whole frame is assembled into one string and written once, which avoids tearing.
-     *
-     * <p>Off a terminal ({@link #INTERACTIVE}) no escapes are emitted at all and frames simply
-     * follow one another, so piped output and CI logs stay readable.
+     * <p>Every frame has the same number of lines - empty depth rows are padded, not omitted -
+     * so the cursor lands where the frame began. Each line is followed by an erase-to-end, so a
+     * short line cannot leave debris. Off a terminal, no escapes are emitted at all.
      */
     private static void draw(List<String> lines, boolean firstFrame) {
         StringBuilder out = new StringBuilder();
@@ -240,10 +217,7 @@ public class Main {
         System.out.flush();
     }
 
-    /**
-     * Builds one frame. Returns lines rather than printing them so the caller can count them,
-     * which is what makes redrawing in place possible without a hardcoded height.
-     */
+    /** Builds one frame as lines, so the caller can count them and redraw without a fixed height. */
     private static List<String> frame(Status status, long elapsedSeconds, String label) {
         BookSnapshot book = status.book();
         List<String> lines = new ArrayList<>();

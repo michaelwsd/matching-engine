@@ -9,14 +9,9 @@ import java.util.Objects;
 /**
  * Notified after the engine has processed each order.
  *
- * <p><strong>Runs on the matcher thread.</strong> That has two consequences a listener must
- * respect. It may safely touch state owned by the matcher - the order book included - because
- * it is executing inside that confinement. And it must be fast: every millisecond it spends is
- * a millisecond the exchange is not matching. Anything slow, such as writing to a file or a
- * socket, belongs on another thread fed by a queue.
- *
- * <p>A listener must also not hand matcher-owned objects to other threads. Publish an immutable
- * value, such as a {@link com.mwang.book.BookSnapshot}, rather than the book itself.
+ * <p>Runs on the matcher thread. It may therefore read matcher-owned state such as the order
+ * book, but it must be fast - every millisecond it spends is a millisecond the exchange is not
+ * matching - and it must hand other threads immutable values only, never the book itself.
  */
 @FunctionalInterface
 public interface MatchListener {
@@ -31,15 +26,11 @@ public interface MatchListener {
     void onMatch(Order order, List<Trade> trades);
 
     /**
-     * Returns a listener that runs this one and then {@code next}, in that order.
+     * Returns a listener that runs this one and then {@code next}. The gateway holds a single
+     * listener, so this is how several are attached.
      *
-     * <p>The gateway holds a single listener, so this is how several are attached. Mirrors
-     * {@link java.util.function.Consumer#andThen}.
-     *
-     * <p>Note the failure behaviour: if the first listener throws, the second is skipped for
-     * that order. The gateway catches and logs it, so the matcher survives, but one broken
-     * listener does deprive the others of that notification. Put the one whose record matters
-     * most - the audit log - first.
+     * <p>If the first throws, the second is skipped for that order and the gateway logs it.
+     * Put the one whose record matters most - the audit log - first.
      */
     default MatchListener andThen(MatchListener next) {
         Objects.requireNonNull(next, "next");

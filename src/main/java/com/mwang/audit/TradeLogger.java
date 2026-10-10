@@ -22,45 +22,25 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Appends every executed trade to a CSV file, as an audit trail.
  *
- * <h2>Why this has its own thread</h2>
+ * <p>A {@link MatchListener} runs on the matcher thread, so anything it does the exchange waits
+ * for. Matching takes microseconds; a file write takes tens to thousands of times longer. So
+ * {@link #onMatch} only queues trades and returns, and a dedicated writer thread does the I/O -
+ * the same producer-consumer shape as {@link com.mwang.gateway.OrderGateway}, one layer out.
  *
- * <p>A {@link MatchListener} runs on the matcher thread, so whatever it does, the exchange
- * waits for. Matching an order takes microseconds; a file write that reaches the operating
- * system takes tens to hundreds of microseconds, and one that reaches the disk takes
- * milliseconds. Writing from the listener directly would make the exchange as slow as the
- * disk.
+ * <p><strong>Flush policy:</strong> the writer flushes whenever the queue empties. Under a
+ * burst, writes batch in the buffer; the moment the burst ends everything is pushed out. Worst
+ * case on a JVM crash is however far behind the writer had fallen, and nothing in a quiet
+ * market. Note {@code flush()} reaches the operating system, not the disk - surviving a process
+ * crash but not a power cut, which would need {@code FileChannel.force()}.
  *
- * <p>So this class is the same producer-consumer shape as {@link
- * com.mwang.gateway.OrderGateway} itself, one layer further out: {@link #onMatch} only drops
- * trades onto a queue and returns, and a dedicated writer thread does the I/O.
+ * <p><strong>Back-pressure:</strong> {@link #onMatch} uses {@code offer}, never {@code put},
+ * because a full queue must not stall the matcher. Drops are therefore possible; they are
+ * counted, logged and reported at close, never silent. This is the opposite trade-off from the
+ * gateway, where blocking the producer is correct - there the producer is a client who can
+ * wait, here it is the matching engine, which cannot.
  *
- * <h2>Flush policy</h2>
- *
- * <p>The writer flushes <strong>whenever it has caught up</strong> - that is, every time the
- * queue is empty after a write. Under a burst, writes batch into the buffer and cost one
- * syscall between them; the moment the burst ends, everything is pushed out. The worst-case
- * loss on a JVM crash is therefore however far behind the writer had fallen, rather than a
- * fixed timer's worth, and in a quiet market it is zero.
- *
- * <p>The alternatives were flushing per trade (durable but a syscall per record even under
- * load) and flushing on a timer (a fixed loss window regardless of how idle the system is).
- *
- * <p>Note what {@code flush()} actually guarantees: the bytes reach the <em>operating
- * system</em>. They survive this process crashing. They do not necessarily survive the
- * machine losing power, because the OS may still be holding them in its page cache - that
- * needs {@code FileChannel.force()}, which a real venue would use and pay for.
- *
- * <h2>Back-pressure</h2>
- *
- * <p>The queue is bounded and {@link #onMatch} uses {@code offer}, never {@code put}: a full
- * queue must not stall the matcher, since avoiding exactly that is why this class exists.
- * That makes dropping possible, which for an audit trail is a serious event - so drops are
- * counted, logged, and reported at close. They are never silent. The queue is sized so that
- * filling it means something is badly wrong, not that the market got busy.
- *
- * <p>This is the opposite trade-off from the gateway, where blocking the producer is the
- * correct behaviour. The difference is who is upstream: there it is a client that can wait,
- * here it is the matching engine, which cannot.
+ * <p>Close this <strong>after</strong> the gateway has shut down, or the matcher's final trades
+ * have nowhere to go.
  */
 public final class TradeLogger implements MatchListener, AutoCloseable {
 
@@ -73,11 +53,8 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
 
     private static final String HEADER = "timestamp,buyOrderId,sellOrderId,price,quantity";
 
-    /**
-     * Sentinel marking the end of the stream. Compared by identity, never by value, so a real
-     * trade can never be mistaken for it. Its field values are arbitrary but must satisfy
-     * {@link Trade}'s own validation, which is why the price and quantity are 1 rather than 0.
-     */
+    /** End-of-stream marker, compared by identity. Its values are arbitrary but must satisfy
+     * {@link Trade}'s validation, hence 1 rather than 0. */
     private static final Trade POISON = new Trade(-1, -1, 1, 1, 0);
 
     private final Path file;
@@ -91,17 +68,15 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
 
     /**
      * @param file where to append trades. Parent directories are created on {@link #start()};
-     *             an existing file is appended to, and the header is written only when the
-     *             file is new, so restarting does not corrupt an earlier run's records.
+     *             an existing file is appended to and the header written only when new, so
+     *             restarting does not corrupt an earlier run's records.
      */
     public TradeLogger(Path file) {
         this.file = Objects.requireNonNull(file, "file");
     }
 
     /**
-     * Opens the file and starts the writer thread.
-     *
-     * <p>Must be called before the gateway starts, or the first trades will have nowhere to go.
+     * Opens the file and starts the writer thread. Must be called before the gateway starts.
      *
      * @throws IOException           if the file cannot be opened
      * @throws IllegalStateException if already started
@@ -129,10 +104,7 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
         logger.info("Trade log open at {}", file.toAbsolutePath());
     }
 
-    /**
-     * Queues this order's trades for writing. Runs on the matcher thread, so it must not block
-     * and must not do I/O - it does neither.
-     */
+    /** Queues this order's trades. Runs on the matcher thread, so it neither blocks nor does I/O. */
     @Override
     public void onMatch(Order order, List<Trade> trades) {
         for (Trade trade : trades) {
@@ -147,11 +119,8 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
     }
 
     /**
-     * Drains the queue onto disk until the poison pill arrives.
-     *
-     * <p>{@code while (true)} with a sentinel, not {@code while (running)}: this is a consumer
-     * with a backlog it has already accepted, and stopping early would discard audit records
-     * that have been promised. Same reasoning as the gateway's matcher.
+     * Drains the queue onto disk until the poison pill arrives. A sentinel rather than a flag,
+     * because this is a consumer with a backlog it has already promised to write.
      */
     private void writeLoop() {
         try {
@@ -173,11 +142,7 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
         flush();
     }
 
-    /**
-     * Writes one CSV row. No quoting or escaping is needed or performed: every column is a
-     * number, so none can contain a comma, a quote or a newline. A format that admitted free
-     * text would need a real CSV writer.
-     */
+    /** Writes one CSV row. No quoting needed: every column is a number. */
     private void write(Trade trade) {
         try {
             out.write(trade.timestamp() + "," + trade.buyOrderId() + "," + trade.sellOrderId()
@@ -198,11 +163,8 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
     }
 
     /**
-     * Drains what is queued, flushes, and closes the file. Idempotent, and safe to call when
-     * the logger was never started.
-     *
-     * <p>Must be called <strong>after</strong> the gateway has shut down. Close it first and
-     * the matcher's final trades have nowhere to go.
+     * Drains what is queued, flushes and closes the file. Idempotent, and safe when never
+     * started. Must run after the gateway has shut down.
      */
     @Override
     public synchronized void close() {

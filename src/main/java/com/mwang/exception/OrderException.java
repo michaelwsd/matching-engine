@@ -1,15 +1,13 @@
 package com.mwang.exception;
 
 /**
- * Base type for conditions caused by a bad request rather than by a fault in the engine.
+ * Base type for a bad request, as opposed to a fault in the engine.
  *
- * <p>The distinction matters at a network boundary: a gateway can catch this one type and
- * reply with a rejection, while letting anything else propagate as a genuine fault. Adding
- * a new subclass later is then automatically covered by existing handlers.
+ * <p>Lets the gateway catch one type and reply with a rejection while anything else propagates
+ * as a genuine fault - and a subclass added later is covered by existing handlers for free.
  *
- * <p>Unchecked, because there is no recovery a caller can perform - a malformed order is a
- * bug in whatever produced it. Making it checked would force a try/catch around every
- * {@code new Order(...)} in the codebase for no benefit.
+ * <p>Unchecked: a caller cannot recover from a malformed order, so making it checked would
+ * only add a try/catch around every {@code new Order(...)}.
  */
 public abstract class OrderException extends RuntimeException {
 

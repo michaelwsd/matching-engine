@@ -6,12 +6,12 @@ import com.mwang.model.Trade;
 import java.util.List;
 
 /**
- * Decides what an incoming order trades against, and what becomes of whatever is left.
+ * Applies one incoming order against the book, producing any trades it causes.
  *
- * <p>Exists as an interface so that a second allocation policy - pro-rata, where an
- * incoming order is split across all resting orders at a price in proportion to their
- * size - can be added as a sibling implementation rather than a rewrite.
+ * <p>An interface so that a second allocation policy - pro-rata, where an order is filled in
+ * proportion to size - can be added as a sibling implementation rather than a rewrite.
  */
+@FunctionalInterface
 public interface MatchingEngine {
 
     /**

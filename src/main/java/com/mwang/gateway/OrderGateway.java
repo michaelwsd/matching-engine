@@ -85,13 +85,9 @@ public class OrderGateway {
     }
 
     /**
-     * Runs the listener, absorbing anything it throws.
-     *
-     * <p>The listener is supplied by a caller and runs on the matcher thread, so an unchecked
-     * exception from it would otherwise propagate out of {@link #matchLoop()} and kill the
-     * matcher - silently, since nothing joins that thread until shutdown. Every order after
-     * that point would queue up and never be processed. A broken listener must not be able to
-     * take the exchange down with it.
+     * Runs the listener, absorbing anything it throws. The listener is caller-supplied and runs
+     * on the matcher thread, so an unchecked exception from it would otherwise kill the matcher
+     * silently and every later order would queue up forever.
      */
     private void notifyListener(Order order, List<Trade> trades) {
         try {

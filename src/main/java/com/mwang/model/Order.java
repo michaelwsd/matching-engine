@@ -7,12 +7,10 @@ import java.util.Objects;
 /**
  * A single order submitted to the exchange.
  *
- * <p>An order is an entity rather than a value: it has an identity ({@code orderId}) that
- * outlives changes to its state. Its remaining quantity shrinks as the order partially
- * fills, which is why this is a class and not a record.
+ * <p>An entity rather than a value: its {@code orderId} outlives changes to its state, and its
+ * remaining quantity shrinks as it fills. That is why this is a class and not a record.
  *
- * <p>Instances are not thread-safe. All access is expected to be confined to the single
- * matcher thread.
+ * <p>Not thread-safe; confined to the matcher thread.
  */
 public class Order {
 
@@ -28,22 +26,20 @@ public class Order {
     private int remainingQuantity;
 
     /**
-     * @param accountId        the account that submitted the order, used for self-trade prevention
+     * @param accountId        the submitting account, used for self-trade prevention
      * @param orderId          unique identifier for this order
-     * @param price            limit price in ticks, where one tick is one cent, so {@code 10001}
-     *                         means $100.01. Never a floating-point type: binary floating point
-     *                         cannot represent decimal fractions exactly, so prices are scaled to
-     *                         whole ticks and compared as exact integers. Ignored for
-     *                         {@link OrderType#MARKET} orders, which have no price protection.
+     * @param price            limit price in ticks, one tick being one cent, so {@code 10001}
+     *                         is $100.01. Never floating point: binary floats cannot represent
+     *                         decimal fractions exactly, so prices are whole ticks compared as
+     *                         integers. Ignored for {@link OrderType#MARKET} orders.
      * @param originalQuantity the quantity submitted, before any fills. Must be positive.
      * @param side             whether this order buys or sells
      * @param orderType        limit or market
-     * @param timestamp        arrival time in milliseconds since the Unix epoch. Supplied by the
-     *                         caller rather than read from the system clock, so that tests can
-     *                         construct orders with controlled arrival times.
+     * @param timestamp        arrival time in milliseconds since the Unix epoch, supplied by
+     *                         the caller so tests can control arrival order
      * @throws InvalidOrderException if the quantity is not positive, or a limit order has a
-     *                                  non-positive price
-     * @throws NullPointerException     if {@code side} or {@code orderType} is null
+     *                               non-positive price
+     * @throws NullPointerException  if {@code side} or {@code orderType} is null
      */
     public Order(long accountId,
                  long orderId,
@@ -74,12 +70,9 @@ public class Order {
     /**
      * Reduces the remaining quantity by the amount filled.
      *
-     * <p>Asking to fill more than remains is treated as a programming error rather than
-     * clamped, because it means the matching logic has lost track of this order's state.
-     * Silently filling less than requested would leave the book quietly inconsistent.
+     * <p>Overfilling throws rather than clamping: it means the matching logic has lost track of
+     * this order, and silently filling less would leave the book quietly inconsistent.
      *
-     * @param quantity the amount filled, which must be positive and no greater than
-     *                 {@link #getRemainingQuantity()}
      * @throws IllegalArgumentException if the quantity is not positive or exceeds what remains
      */
     public void fill(int quantity) {
