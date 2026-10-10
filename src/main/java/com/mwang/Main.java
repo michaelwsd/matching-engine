@@ -99,6 +99,7 @@ public class Main {
     /** Everything the renderer needs, captured together so one read gives a consistent view. */
     private record Status(BookSnapshot book, long orders, long trades) { }
 
+    // initial state, 0 orders and trades
     private static final Status EMPTY = new Status(
             new BookSnapshot(List.of(), List.of(), OrderBook.NO_PRICE, OrderBook.NO_PRICE), 0, 0);
 
@@ -111,6 +112,7 @@ public class Main {
         OrderBook book = new OrderBook();
         MatchingEngine engine = new PriceTimeMatchingEngine(book);
 
+        // initialize state
         AtomicReference<Status> latest = new AtomicReference<>(EMPTY);
 
         // Runs on the matcher thread, so it may read the book; it publishes only an immutable
@@ -119,6 +121,7 @@ public class Main {
         // The lambda function will match the abstract method, as there is only one abstract method
         MatchListener publishSnapshot = (order, trades) -> {
             Status previous = latest.get();
+            // update the previous state
             latest.set(new Status(book.snapshot(DEPTH_LEVELS),
                     previous.orders() + 1, previous.trades() + trades.size()));
         };
@@ -138,6 +141,7 @@ public class Main {
         // and the depth it reports come from the same moment.
         BookFeedServer feedServer = new BookFeedServer(FEED_PORT, () -> {
             Status status = latest.get();
+            // return a snapshot of the current book
             return MarketDataSnapshot.from(status.book(), status.orders(),
                     System.currentTimeMillis());
         });
