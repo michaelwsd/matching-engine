@@ -213,12 +213,28 @@ Levels, and what they mean in practice:
 
 - `ERROR` - something is broken and needs a human
 - `WARN` - suspicious but handled; a rejected order belongs here
-- `INFO` - significant business events; trades belong here
+- `INFO` - lifecycle and run totals; components starting and stopping, and the counts they
+  report when they do
 - `DEBUG` - detail for diagnosing a problem
 - `TRACE` - firehose
 
 The discipline: if `INFO` is too noisy to read, it's wrong. Someone should be able to watch
 `INFO` during a run and understand what happened.
+
+**Where individual trades go, and why it is not `INFO`.** A trade is important, so `INFO`
+looks obvious. Measure before you decide. This simulation executes around 34 trades a second
+against a live view that redraws 5 times a second, so per-trade `INFO` lines scroll away the
+thing they are annotating and bury the lifecycle lines that say whether the run was healthy.
+Worse, Logback's appenders are synchronous: the thread that calls `logger.info` performs the
+write, and trades are logged from the matcher thread. An `INFO` line there puts file and
+console I/O on the exchange's hot path - the exact cost `TradeLogger` exists to move onto its
+own thread.
+
+So level is about **audience and rate**, not importance. Trades go to `DEBUG`, reachable with
+`-DLOG_LEVEL=DEBUG` when diagnosing a specific run. The complete, permanent record of every
+trade is the CSV audit trail, which is unconditional. `Logback`'s `AsyncAppender` is the
+answer if per-trade logging ever has to be permanent - it buffers and can drop, and both are
+decisions worth making deliberately.
 
 Configure `logback.xml` in `src/main/resources` with a console appender and a rolling file
 appender. Rolling matters - an unbounded log file fills a disk, and a full disk takes the
@@ -312,8 +328,9 @@ Set the content type correctly. Handle the case where the book is empty.
 
 ### 4.6 - Migrate to SLF4J
 
-Replace every `System.out.println` in library code. Trades at `INFO`, rejected orders at
-`WARN`. Configure console and rolling file appenders in `logback.xml`.
+Replace every `System.out.println` in library code. Rejected orders at `WARN`, lifecycle and
+run totals at `INFO`, individual trades at `DEBUG` - see the levels section above for why that
+last one is not `INFO`. Configure console and rolling file appenders in `logback.xml`.
 
 `Main` and `SimulationRunner` may legitimately print to stdout - that's their user
 interface, not logging. Everything else logs.
@@ -336,15 +353,42 @@ interface, not logging. Everything else logs.
 
 ## Definition of done
 
-- [ ] `MarketDataGenerator` producing a bounded random walk, seedable
-- [ ] Orders driven into the Phase 3 gateway from generated (or replayed) data
-- [ ] `TradeLogger` appending trades with try-with-resources and a documented flush policy
-- [ ] `BookSnapshot` serialised to JSON by Jackson
-- [ ] HTTP endpoint returning live snapshots, verified with `curl`
-- [ ] No `System.out.println` outside `Main`/`SimulationRunner`
-- [ ] `logback.xml` with console and rolling file appenders
-- [ ] Trades at `INFO`, rejections at `WARN`
-- [ ] `./mvnw clean test` green
+- [x] `MarketDataGenerator` producing a bounded random walk, seedable
+- [x] Orders driven into the Phase 3 gateway from generated (or replayed) data
+- [x] `TradeLogger` appending trades with try-with-resources and a documented flush policy
+- [x] `BookSnapshot` serialised to JSON by Jackson
+- [x] HTTP endpoint returning live snapshots, verified with `curl`
+- [x] No `System.out.println` outside `Main`/`SimulationRunner`
+- [x] `logback.xml` with console and rolling file appenders
+- [x] Rejections at `WARN`, lifecycle at `INFO`, trades at `DEBUG` - **amended** from "trades
+      at `INFO`" after measuring the rate and noticing the appenders are synchronous. The
+      reasoning is in the levels section above; the measurement is what changed the decision.
+- [x] `./mvnw clean test` green
+
+**Skipped deliberately:** 4.2's CSV replay. The generator covers the same ground for this
+project's purposes, and replay's real value - lookahead bias, historical backtests - belongs
+to a backtester rather than to a matching engine. Worth building if this ever grows one.
+
+### What a healthy run logs
+
+Eight lines, start to finish, with totals that reconcile against each other and against the
+CSV:
+
+```
+INFO  [main] TradeLogger     - Trade log open at .../logs/trades.csv
+INFO  [main] OrderGateway    - Gateway started, queue capacity 1000
+INFO  [main] OrderFlowDriver - Order flow started, up to one order every 40ms
+INFO  [main] BookFeedServer  - Book feed listening on http://localhost:8080/book
+INFO  [main] BookFeedServer  - Book feed stopped
+INFO  [main] OrderFlowDriver - Order flow stopped after 920 orders
+INFO  [main] OrderGateway    - Gateway stopped: 920 orders processed, 672 trades, 0 rejected
+INFO  [main] TradeLogger     - Trade log closed, 672 trades written to logs/trades.csv
+```
+
+Read it as a reconciliation, not as chatter. The driver submitted 920 and the gateway
+processed 920, so nothing was dropped at the queue. The gateway counted 672 trades and the
+logger wrote 672, so nothing was dropped at the audit trail. A mismatch in either pair is a
+bug that no single component would report on its own.
 
 ---
 
@@ -385,7 +429,9 @@ interface, not logging. Everything else logs.
 - **A new `ObjectMapper` per request** - it's expensive and it's thread-safe; make it a field.
 - **Reading the book from the HTTP thread** while the matcher mutates it. Torn state, and
   it will be intermittent and horrible to debug.
-- **Logging every order at `INFO`**, drowning the trades you actually wanted to see.
+- **Logging per-event at `INFO`** - every order, or every trade - drowning the lifecycle lines
+  that tell you whether the run was healthy, and putting synchronous I/O on the matcher thread
+  while you do it.
 - **No log rotation**, filling the disk during a long run.
 - **Hardcoded absolute file paths** that only work on your machine.
 - **Committing a large tick CSV** to git. Keep it small, or keep it out.

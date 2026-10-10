@@ -193,6 +193,33 @@ class MidPriceWalkTest {
 
     // --- fixtures ---
 
+    // --- the published range ---
+
+    /**
+     * {@code floor()} is not just a convenience: {@link MarketDataGenerator} validates its own
+     * offset against it, so this is the contract that keeps every generated price positive.
+     */
+    @Test
+    void shouldReportTheRangeItWillNeverLeave() {
+        MidPriceWalk walk = seededWalk();
+
+        assertThat(walk.floor()).isEqualTo(FLOOR);
+        assertThat(walk.ceiling()).isEqualTo(CEILING);
+    }
+
+    @Test
+    void shouldKeepTheFloorPositiveSoEveryMidCanPriceAnOrder() {
+        assertThat(seededWalk().floor()).isPositive();
+    }
+
+    @Test
+    void shouldNeverStepOutsideItsOwnPublishedRange() {
+        MidPriceWalk walk = seededWalk();
+
+        assertThat(walk(walk, 10_000))
+                .allSatisfy(mid -> assertThat(mid).isBetween(walk.floor(), walk.ceiling()));
+    }
+
     private static MidPriceWalk seededWalk() {
         return new MidPriceWalk(REFERENCE, STEP, DEVIATION, SEED);
     }

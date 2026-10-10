@@ -14,8 +14,11 @@ import java.util.Random;
  * <p>Instances are not thread-safe. {@link #next()} mutates {@code mid}, so confine one
  * walk to one thread.
  */
-public class MidPriceWalk {
-    private final long referenceMid; // level it is pulled back towards
+public final class MidPriceWalk {
+
+    /** The centre of the allowed range. Nothing pulls the mid back towards it; the clamp
+     *  simply stops it leaving. */
+    private final long referenceMid;
     private final long stepSize;
     private final long maxDeviation;
     private final Random random;
@@ -77,10 +80,22 @@ public class MidPriceWalk {
         return mid;
     }
 
+    /**
+     * @return the lowest mid this walk can ever produce. Callers pricing orders around the mid
+     *         use this to prove their own prices stay positive.
+     */
+    public long floor() {
+        return referenceMid - maxDeviation;
+    }
+
+    /** @return the highest mid this walk can ever produce */
+    public long ceiling() {
+        return referenceMid + maxDeviation;
+    }
+
+    /** Pins a candidate mid into the allowed range, which is what bounds the walk. */
     private long clamp(long candidate) {
-        long floor = referenceMid - maxDeviation;
-        long ceiling = referenceMid + maxDeviation;
-        return Math.clamp(candidate, floor, ceiling); // ensure it's always within the bound
+        return Math.clamp(candidate, floor(), ceiling());
     }
 
     @Override

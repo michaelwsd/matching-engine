@@ -26,7 +26,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>Wires the pipeline together: a random walk supplies a mid price, a generator turns each
  * mid into an order, a driver pushes those into the gateway from its own thread, and the
- * gateway's single matcher thread feeds them to the engine.
+ * gateway's single matcher thread feeds them to the engine. Each matched order then fans out
+ * to a {@link TradeLogger}, which appends it to a CSV audit trail from its own thread, and to
+ * the published snapshot that this class renders and {@link BookFeedServer} serves as JSON.
  *
  * <p>The book is never read from here. It is confined to the matcher thread, so instead a
  * {@link MatchListener} - which the gateway invokes <em>on that thread</em> - builds an
@@ -100,6 +102,11 @@ public class Main {
     private static final Status EMPTY = new Status(
             new BookSnapshot(List.of(), List.of(), OrderBook.NO_PRICE, OrderBook.NO_PRICE), 0, 0);
 
+    /**
+     * Builds the pipeline, runs it for {@link #RUN_DURATION}, then shuts it down and prints a
+     * final frame. Blocks for the whole run; everything else happens on the threads the
+     * components own.
+     */
     public static void main(String[] args) throws InterruptedException, IOException {
         OrderBook book = new OrderBook();
         MatchingEngine engine = new PriceTimeMatchingEngine(book);
@@ -159,6 +166,13 @@ public class Main {
             }
         }
 
+        // Each component logs an INFO line as it stops, and those lines land between the last
+        // live frame and the final one. Leave a blank line so they do not look like part of
+        // the frame above them.
+        if (INTERACTIVE) {
+            System.out.println();
+        }
+
         // Stop backwards, in the exact reverse of the start order. The producer first, so
         // nothing is still submitting while the gateway drains; the trade log last, so the
         // matcher's final trades still have somewhere to go.
@@ -171,6 +185,8 @@ public class Main {
 
         // The matcher thread has been joined, so reading the book directly is now safe.
         Status finalStatus = latest.get();
+        // Fresh, not in place: the shutdown log lines above mean a cursor-up here would count
+        // back over them and overwrite them along with half the previous frame.
         draw(frame(new Status(book.snapshot(DEPTH_LEVELS), finalStatus.orders(),
                 finalStatus.trades()), RUN_DURATION.toSeconds(), "final"), false);
 
@@ -183,11 +199,11 @@ public class Main {
         Duration refresh = INTERACTIVE ? REFRESH : SCROLLING_REFRESH;
         long frames = RUN_DURATION.toMillis() / refresh.toMillis();
 
-        draw(frame(latest.get(), 0, "live"), true);
+        draw(frame(latest.get(), 0, "live"), false);
         for (long frame = 1; frame <= frames; frame++) {
             Thread.sleep(refresh.toMillis());
             long elapsedSeconds = frame * refresh.toMillis() / 1_000;
-            draw(frame(latest.get(), elapsedSeconds, "live"), false);
+            draw(frame(latest.get(), elapsedSeconds, "live"), true);
         }
     }
 
@@ -207,15 +223,20 @@ public class Main {
     private static final String ASK_CELL = "%9s %8s";
 
     /**
-     * Redraws a frame in place by moving the cursor back up over the previous one.
+     * Prints one frame, optionally redrawing over the frame above it.
      *
-     * <p>Every frame has the same number of lines - empty depth rows are padded, not omitted -
-     * so the cursor lands where the frame began. Each line is followed by an erase-to-end, so a
-     * short line cannot leave debris. Off a terminal, no escapes are emitted at all.
+     * <p>In-place redraw works by moving the cursor back up exactly as many lines as the frame
+     * is tall. Every frame has the same height - empty depth rows are padded, not omitted - so
+     * the cursor lands where the previous frame began. Each line ends with an erase-to-end, so
+     * a shorter line cannot leave debris behind.
+     *
+     * <p>{@code redrawInPlace} must be false whenever anything else has printed since the last
+     * frame, because the cursor would otherwise count back over that output and overwrite it.
+     * Off a terminal it is ignored and no escapes are emitted at all.
      */
-    private static void draw(List<String> lines, boolean firstFrame) {
+    private static void draw(List<String> lines, boolean redrawInPlace) {
         StringBuilder out = new StringBuilder();
-        if (!firstFrame && INTERACTIVE) {
+        if (redrawInPlace && INTERACTIVE) {
             out.append("\u001B[").append(lines.size()).append('A');
         }
         for (String line : lines) {

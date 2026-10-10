@@ -72,12 +72,36 @@
          What each level is for in this project:
              ERROR  the engine is broken and needs a human
              WARN   suspicious but handled - a rejected order belongs here
-             INFO   significant business events - trades belong here
-             DEBUG  detail for diagnosing a specific problem
+             INFO   lifecycle and run totals: components starting and stopping, and the
+                    counts they report when they do
+             DEBUG  detail for diagnosing a specific run - individual trades live here
              TRACE  firehose
 
          The test for whether INFO is right: someone should be able to watch INFO during
          a run and understand what happened. If it is too noisy to read, it is wrong.
+
+         WHY INDIVIDUAL TRADES ARE DEBUG, NOT INFO
+         A trade is important, so INFO looks like the obvious home for it. Two reasons it
+         is not:
+
+           1. RATE. The demo's twenty second run executes around 690 trades, roughly 34 a
+              second, against a live view that redraws 5 times a second. Per-trade INFO
+              lines would scroll that view away, bury the lifecycle lines that actually say
+              whether the run was healthy, and fail the readability test just above. The
+              rate is a property of this simulation's pacing, not a ceiling: a real venue
+              can do far more.
+
+           2. LATENCY. Both appenders below are SYNCHRONOUS: the thread that calls
+              logger.info is the thread that performs the write. Trades are logged from the
+              matcher thread, so an INFO line there would put console and file I/O on the
+              exchange's hot path - the exact cost TradeLogger exists to move onto its own
+              thread. Turning DEBUG on reintroduces it, which is fine for diagnosis and
+              would not be fine in production. Logback's AsyncAppender is the answer if
+              per-trade logging ever has to be permanent; it buffers and can drop, and both
+              of those are decisions worth making deliberately rather than inheriting.
+
+         The permanent, complete record of every trade is the CSV audit trail that
+         TradeLogger writes. This file is for humans reading a run.
 
       2. APPENDER-REFS - the destinations that are actually active. Every message that
          survives the level check goes to all of them.

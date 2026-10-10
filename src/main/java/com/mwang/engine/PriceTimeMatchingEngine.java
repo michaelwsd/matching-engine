@@ -22,10 +22,15 @@ import java.util.Optional;
  *
  * <p>Not thread-safe.
  */
-public class PriceTimeMatchingEngine implements MatchingEngine {
+public final class PriceTimeMatchingEngine implements MatchingEngine {
 
     private final OrderBook book;
 
+    /**
+     * @param book the book to match against and rest unfilled remainders on. This engine
+     *             expects to be its only writer.
+     * @throws NullPointerException if {@code book} is null
+     */
     public PriceTimeMatchingEngine(OrderBook book) {
         this.book = Objects.requireNonNull(book, "book");
     }
@@ -91,12 +96,19 @@ public class PriceTimeMatchingEngine implements MatchingEngine {
         return trades;
     }
 
+    /**
+     * Whether these two orders can trade - the incoming order's price is at least as good as
+     * the resting order's, from the incoming order's point of view.
+     *
+     * <p>A market order always crosses: it accepts any price, which is exactly what makes it a
+     * market order.
+     */
     private boolean ordersCrossed(Order incoming, Order resting) {
-        if (incoming.getOrderType() == OrderType.MARKET) return true;
-        if (incoming.getOrderType() == OrderType.LIMIT) {
-            if (incoming.getSide() == Side.BUY && incoming.getPrice() < resting.getPrice()) return false;
-            return incoming.getSide() != Side.SELL || incoming.getPrice() <= resting.getPrice();
+        if (incoming.getOrderType() == OrderType.MARKET) {
+            return true;
         }
-        return true;
+        return incoming.getSide() == Side.BUY
+                ? incoming.getPrice() >= resting.getPrice()
+                : incoming.getPrice() <= resting.getPrice();
     }
 }

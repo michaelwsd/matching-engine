@@ -333,6 +333,34 @@ class MarketDataGeneratorTest {
                 .hasMessageContaining("accountCount");
     }
 
+    /**
+     * An offset wider than the walk's floor could price an order at or below zero, which
+     * {@link Order} rejects - so the simulation would die partway through a run rather than
+     * refuse to start. Rejecting it here turns a delayed crash into a construction failure.
+     */
+    @Test
+    void shouldRejectAMaxOffsetThatCouldPriceAnOrderAtZero() {
+        MidPriceWalk walk = new MidPriceWalk(REFERENCE, STEP, DEVIATION, WALK_SEED);
+
+        assertThatThrownBy(() -> new MarketDataGenerator(
+                walk, walk.floor(), MIN_QUANTITY, MAX_QUANTITY, ACCOUNT_COUNT, GENERATOR_SEED))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxOffset");
+    }
+
+    /** The widest offset that cannot reach zero must still be accepted. */
+    @Test
+    void shouldAcceptTheWidestOffsetThatKeepsPricesPositive() {
+        MidPriceWalk walk = new MidPriceWalk(REFERENCE, STEP, DEVIATION, WALK_SEED);
+
+        MarketDataGenerator generator = new MarketDataGenerator(
+                walk, walk.floor() - 1, MIN_QUANTITY, MAX_QUANTITY, ACCOUNT_COUNT,
+                GENERATOR_SEED);
+
+        assertThat(generate(generator, 1_000))
+                .allSatisfy(order -> assertThat(order.getPrice()).isPositive());
+    }
+
     /** The unseeded constructor must apply the same validation, not bypass it. */
     @Test
     void shouldValidateArgumentsOnTheUnseededConstructorToo() {

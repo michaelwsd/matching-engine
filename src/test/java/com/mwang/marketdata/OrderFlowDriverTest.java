@@ -35,8 +35,9 @@ class OrderFlowDriverTest {
      * <p>The driver is stopped first because that is the documented shutdown order: a producer
      * submitting to an already-stopped gateway gets an {@link IllegalStateException}. The filler
      * is then stopped so it cannot refill the queue, and only then is the engine released so the
-     * matcher can drain - because {@code shutdown()} enqueues its poison pill with a blocking
-     * {@code put()}, which would never return while the queue is full and the matcher stalled.
+     * matcher can drain. {@code shutdown()} would survive the queue still being full - it
+     * offers its poison pill with a timeout - but it would spend that whole timeout first and
+     * log an error, so every test here would pay five seconds to prove nothing.
      */
     @AfterEach
     void tearDown() throws InterruptedException {
@@ -211,6 +212,38 @@ class OrderFlowDriverTest {
     }
 
     // --- fixtures ---
+
+    // --- run counter ---
+
+    /**
+     * The count feeds the line the driver logs when it stops, which is the only record of how
+     * much flow a run produced.
+     */
+    @Test
+    void shouldCountTheOrdersItSubmits() throws InterruptedException {
+        AtomicInteger matched = new AtomicInteger();
+        startGatewayWith(countingEngine(matched));
+        driver = newDriver();
+
+        driver.start();
+        Thread.sleep(200);
+        driver.stop();
+
+        assertThat(driver.submitted())
+                .as("the producer should have got several orders away in 200ms")
+                .isPositive();
+        assertThat(driver.submitted())
+                .as("every submitted order reaches the engine once the queue drains")
+                .isGreaterThanOrEqualTo(matched.get());
+    }
+
+    @Test
+    void shouldReportZeroSubmittedBeforeItStarts() {
+        startGatewayWith(countingEngine(new AtomicInteger()));
+        driver = newDriver();
+
+        assertThat(driver.submitted()).isZero();
+    }
 
     private void startGatewayWith(MatchingEngine engine) {
         gateway = new OrderGateway(engine);

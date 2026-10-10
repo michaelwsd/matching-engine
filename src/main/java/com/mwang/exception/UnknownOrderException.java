@@ -16,6 +16,7 @@ public class UnknownOrderException extends OrderException {
         this.orderId = orderId;
     }
 
+    /** @return the id that was not found, for a handler that needs to report it back */
     public long getOrderId() {
         return orderId;
     }

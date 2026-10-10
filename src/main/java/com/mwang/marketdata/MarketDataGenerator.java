@@ -7,6 +7,21 @@ import com.mwang.model.Side;
 import java.util.Objects;
 import java.util.Random;
 
+/**
+ * Turns a moving mid price into a stream of plausible limit orders.
+ *
+ * <p>Each order takes a random side, a random size, a random account, and a price offset a
+ * random distance either side of the current mid. That offset is <em>signed</em> on purpose:
+ * pricing buys only below the mid and sells only above it would produce a book that never
+ * crosses and therefore never trades. Letting a buy sit above the mid is what makes some of
+ * this flow aggressive.
+ *
+ * <p>Order ids are issued in sequence from 1, so a generated stream is unique within one
+ * generator and reproducible given the same seed.
+ *
+ * <p>Not thread-safe: {@link #nextOrder()} advances both the walk and this class's own random
+ * sequence. Confine one generator to one thread.
+ */
 public final class MarketDataGenerator {
 
     private final MidPriceWalk walk;
@@ -21,8 +36,10 @@ public final class MarketDataGenerator {
     /**
      * @param walk         supplies the mid price that each order is priced around
      * @param maxOffset    largest distance from the mid, in ticks, at which an order may be
-     *                     priced. Must be positive: an offset of zero would price every order
-     *                     at exactly the mid, which is not a market.
+     *                     priced. Must be positive - an offset of zero would price every order
+     *                     at exactly the mid, which is not a market - and must be less than
+     *                     the walk's {@link MidPriceWalk#floor()}, so that no generated price
+     *                     can reach zero and be rejected by {@link Order}.
      * @param minQuantity  smallest order size; must be positive
      * @param maxQuantity  largest order size; must be at least {@code minQuantity}
      * @param accountCount how many distinct accounts the generated flow comes from. Must be at
@@ -44,6 +61,11 @@ public final class MarketDataGenerator {
         Objects.requireNonNull(walk, "walk");
         if (maxOffset <= 0) {
             throw new IllegalArgumentException("maxOffset must be positive: " + maxOffset);
+        }
+        if (maxOffset >= walk.floor()) {
+            throw new IllegalArgumentException(
+                    "maxOffset must be less than the walk's floor, otherwise a generated price "
+                            + "can reach zero: " + maxOffset + " >= " + walk.floor());
         }
         if (minQuantity <= 0) {
             throw new IllegalArgumentException("minQuantity must be positive: " + minQuantity);
@@ -72,15 +94,21 @@ public final class MarketDataGenerator {
         this(walk, maxOffset, minQuantity, maxQuantity, accountCount, new Random().nextLong());
     }
 
-    /** Generate a simulated order. **/
+    /**
+     * Advances the mid by one tick and prices one order around it.
+     *
+     * @return a limit order, always with a positive price and quantity
+     */
     public Order nextOrder() {
-        long mid = walk.next(); // advance the walk
-        Side side = Side.values()[random.nextInt(2)];
-        long price = mid + random.nextLong(-maxOffset, maxOffset+1);
-        int quantity = random.nextInt(minQuantity, maxQuantity+1);
-        int account = random.nextInt(1, accountCount+1);
-        long timestamp = System.currentTimeMillis();
-        return new Order(account, nextOrderId++, price, quantity, side, OrderType.LIMIT, timestamp);
+        long mid = walk.next();
+        // nextBoolean() rather than Side.values()[nextInt(2)]: values() allocates a fresh array
+        // on every call, and indexing by ordinal would silently change meaning if the enum were
+        // ever reordered or extended.
+        Side side = random.nextBoolean() ? Side.SELL : Side.BUY;
+        long price = mid + random.nextLong(-maxOffset, maxOffset + 1);
+        int quantity = random.nextInt(minQuantity, maxQuantity + 1);
+        int account = random.nextInt(1, accountCount + 1);
+        return new Order(account, nextOrderId++, price, quantity, side, OrderType.LIMIT,
+                System.currentTimeMillis());
     }
 }
-

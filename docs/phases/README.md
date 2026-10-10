@@ -5,6 +5,10 @@ This directory holds the build documents for the matching engine project describ
 
 Read this file once, then work through the phases in order.
 
+**Also here:** [`../architecture.html`](../architecture.html) draws how the finished pieces
+fit together - the threads, the boundaries between them, and which package holds what. Open
+it when a phase document refers to something built in an earlier one.
+
 ---
 
 ## The contract
@@ -73,7 +77,7 @@ Fix best bid returning stale price after cancel
 Not `added stuff` or `wip`. Commit small and often - one logical change per commit. Your
 git history is a portfolio artifact, and interviewers do look at it.
 
-**Branches.** Work on `master` for now; this is a solo project and branch ceremony would
+**Branches.** Work on `main` for now; this is a solo project and branch ceremony would
 be noise. If we do the GitHub Actions stretch goal, we revisit.
 
 **Naming.** Classes are nouns (`OrderBook`), methods are verbs (`cancelOrder`), booleans

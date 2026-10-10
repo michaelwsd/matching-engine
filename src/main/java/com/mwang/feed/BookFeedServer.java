@@ -1,5 +1,6 @@
 package com.mwang.feed;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -65,13 +66,16 @@ public final class BookFeedServer implements AutoCloseable {
         if (server != null) {
             throw new IllegalStateException("feed server already started");
         }
+        // asks the OS to reserve this port for this program
+        // 0 for system default backlog (how many incoming connections to hold when server is busy)
         server = HttpServer.create(new InetSocketAddress(requestedPort), 0);
+        // say what to do with /book
         server.createContext(PATH, this::handle);
 
         // Without an executor, requests are serialised onto one thread. Concurrency is safe
         // here because a handler only reads an immutable snapshot and shares nothing.
         executor = Executors.newVirtualThreadPerTaskExecutor();
-        server.setExecutor(executor);
+        server.setExecutor(executor); // every request gets a thread for concurrency
         server.start();
 
         logger.info("Book feed listening on http://localhost:{}{}", port(), PATH);
@@ -113,11 +117,17 @@ public final class BookFeedServer implements AutoCloseable {
                 respond(exchange, 404, "{\"error\":\"not found\"}");
                 return;
             }
+            // source.get hands back a market data snapshot, then turns into text
             respond(exchange, 200, mapper.writeValueAsString(source.get()));
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | JsonProcessingException e) {
             // An exception escaping a handler closes the connection with no status at all, so
             // the client sees a truncated response rather than an error. Same reasoning as the
             // gateway's guard around a caller-supplied listener.
+
+            // JsonProcessingException is named explicitly because it is a checked IOException,
+            // not a RuntimeException, so catching the latter alone would let a serialisation
+            // failure escape past this very guard. Any other IOException is the connection
+            // itself failing, where writing a 500 to it would be pointless.
             logger.error("Failed to serve {}", exchange.getRequestURI(), e);
             respond(exchange, 500, "{\"error\":\"internal error\"}");
         } finally {

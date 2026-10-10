@@ -8,6 +8,7 @@ import com.mwang.model.Side;
 import com.mwang.model.Trade;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -215,7 +216,151 @@ class OrderGatewayTest {
                 .hasMessageContaining("listener");
     }
 
+    // --- run counters ---
+
+    /**
+     * The counters are the only record of a run's size once the process is gone, since they
+     * feed the summary line shutdown logs. Asserting after {@code shutdown()} needs no latch:
+     * shutdown drains the queue before returning, so the totals are final by then.
+     */
+    @Test
+    void shouldCountEveryOrderItProcesses() throws Exception {
+        startWith(order -> List.of());
+
+        gateway.submit(buy(1));
+        gateway.submit(buy(2));
+        gateway.submit(buy(3));
+        gateway.shutdown();
+
+        assertThat(gateway.ordersProcessed()).isEqualTo(3);
+        assertThat(gateway.tradesExecuted()).isZero();
+        assertThat(gateway.ordersRejected()).isZero();
+    }
+
+    @Test
+    void shouldCountTheTradesTheEngineProduces() throws Exception {
+        startWith(order -> List.of(new Trade(1, 2, 10_000, 10, 0),
+                new Trade(3, 4, 10_000, 10, 0)));
+
+        gateway.submit(buy(1));
+        gateway.submit(buy(2));
+        gateway.shutdown();
+
+        assertThat(gateway.ordersProcessed()).isEqualTo(2);
+        assertThat(gateway.tradesExecuted())
+                .as("two orders, two trades each")
+                .isEqualTo(4);
+    }
+
+    /**
+     * A rejected order still reached the engine, so it counts as processed as well as
+     * rejected. Counting it only as rejected would make the two totals fail to reconcile.
+     */
+    @Test
+    void shouldCountARejectedOrderAsBothProcessedAndRejected() throws Exception {
+        startWith(order -> {
+            throw new InvalidOrderException("rejected");
+        });
+
+        gateway.submit(buy(1));
+        gateway.shutdown();
+
+        assertThat(gateway.ordersProcessed()).isEqualTo(1);
+        assertThat(gateway.ordersRejected()).isEqualTo(1);
+        assertThat(gateway.tradesExecuted()).isZero();
+    }
+
+    @Test
+    void shouldReportZeroCountsBeforeAnythingIsSubmitted() {
+        startWith(order -> List.of());
+
+        assertThat(gateway.ordersProcessed()).isZero();
+        assertThat(gateway.tradesExecuted()).isZero();
+        assertThat(gateway.ordersRejected()).isZero();
+    }
+
+    // --- shutdown under the worst case ---
+
+    /**
+     * Shutdown must return even when the matcher will never come back <em>and</em> the queue
+     * has no room for the poison pill.
+     *
+     * <p>A blocking {@code put} of the pill would wait for a slot only the wedged matcher
+     * could free, so it would wait forever - and the {@code join} that is meant to bound the
+     * whole shutdown sits after it and would never be reached. The failure mode is a hang with
+     * no log line explaining it.
+     *
+     * <p>Deliberately the slowest test in the suite: it spends the real {@code offer} timeout,
+     * because the timeout elapsing is the thing being asserted. The annotation runs the body on
+     * its own thread so that a regression fails the test rather than hanging the build.
+     *
+     * <p>Emits an expected ERROR about the pill and an {@code IllegalStateException} from the
+     * wedged engine. Both are the test working.
+     */
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void shouldStopWaitingForThePoisonPillWhenTheQueueIsFullAndTheMatcherIsWedged()
+            throws Exception {
+        CountDownLatch reachedEngine = new CountDownLatch(1);
+        gateway = new OrderGateway(order -> {
+            reachedEngine.countDown();
+            try {
+                // Never released. Only the interrupt from shutdown ends this wait, and the
+                // exception it becomes kills the matcher - which is what lets the JVM exit.
+                new CountDownLatch(1).await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("engine interrupted", e);
+            }
+            return List.of();
+        });
+        gateway.start();
+
+        // One order to drive the matcher into the engine, where it wedges. Only then is the
+        // queue filled, so every slot stays taken for the rest of the test.
+        gateway.submit(buy(1));
+        assertThat(reachedEngine.await(2, TimeUnit.SECONDS))
+                .as("the matcher should be inside the engine before the queue is filled")
+                .isTrue();
+        Thread filler = fillQueue();
+
+        gateway.shutdown();
+
+        filler.interrupt();
+        assertThat(gateway.ordersProcessed())
+                .as("the wedged order never completed, so nothing was counted")
+                .isZero();
+    }
+
     // --- fixtures ---
+
+    /**
+     * Submits until the submitting thread parks inside {@code put()}, whichever capacity the
+     * gateway happens to use. Hardcoding 1000 here would silently stop filling the queue the
+     * day that constant changed.
+     */
+    private Thread fillQueue() throws InterruptedException {
+        Thread filler = new Thread(() -> {
+            try {
+                for (long id = 1; ; id++) {
+                    gateway.submit(buy(id));
+                }
+            } catch (InterruptedException | IllegalStateException e) {
+                // Either the queue filled and we were interrupted, or the gateway stopped.
+            }
+        }, "queue-filler");
+        filler.setDaemon(true); // must never outlive the test and hold the JVM open
+        filler.start();
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (System.nanoTime() < deadline) {
+            if (filler.getState() == Thread.State.WAITING) {
+                return filler;
+            }
+            Thread.sleep(5);
+        }
+        throw new AssertionError("the queue never filled");
+    }
 
     private void startWith(MatchingEngine engine) {
         gateway = new OrderGateway(engine);

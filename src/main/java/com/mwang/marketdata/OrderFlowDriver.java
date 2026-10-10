@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Generates synthetic orders on its own thread and submits them to an {@link OrderGateway}.
@@ -42,6 +43,12 @@ public final class OrderFlowDriver {
     private Thread producer;
 
     /**
+     * How many orders this driver has handed to the gateway. Written by the producer thread,
+     * read by {@link #stop()} and by {@link #submitted()}, so not a plain {@code long}.
+     */
+    private final AtomicLong submitted = new AtomicLong();
+
+    /**
      * Whether to keep generating. Written by {@link #stop()}, read by the producer thread, so
      * {@code volatile} rather than monitor-guarded - if the producer needed this object's
      * monitor, {@code stop()} holding it across {@link Thread#join(long)} would deadlock.
@@ -73,6 +80,7 @@ public final class OrderFlowDriver {
 
         producer = new Thread(this::producerLoop, "producer");
         producer.start();
+        logger.info("Order flow started, up to one order every {}ms", MAX_DELAY_MILLIS);
     }
 
     /**
@@ -87,6 +95,7 @@ public final class OrderFlowDriver {
         try {
             while (running) {
                 gateway.submit(generator.nextOrder());
+                submitted.incrementAndGet();
                 Thread.sleep(Duration.ofMillis(random.nextLong(0, MAX_DELAY_MILLIS)));
             }
         } catch (InterruptedException e) {
@@ -119,10 +128,16 @@ public final class OrderFlowDriver {
         try {
             producer.join(SHUTDOWN_TIMEOUT_MILLIS);
             if (producer.isAlive()) {
-                logger.error("producer did not stop within {}ms", SHUTDOWN_TIMEOUT_MILLIS);
+                logger.error("Producer did not stop within {}ms", SHUTDOWN_TIMEOUT_MILLIS);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        logger.info("Order flow stopped after {} orders", submitted.get());
+    }
+
+    /** @return how many orders this driver has submitted so far */
+    public long submitted() {
+        return submitted.get();
     }
 }

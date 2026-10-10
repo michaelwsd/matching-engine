@@ -18,6 +18,8 @@
   --lane-producer:#e8eef0;
   --lane-matcher:#efe7da;
   --lane-main:#eae9f1;
+  --lane-writer:#e7eee8;
+  --lane-http:#f0e9ec;
   --lane-edge:#cfc6b2;
   --boundary:#f2e3c8;
   --wire:#8d8470;
@@ -29,6 +31,7 @@
     --ink:#f1e9d8; --ink-muted:#a89d86; --accent:#e0a34a; --accent-soft:#3a2d16;
     --border:#3a3222; --success:#7bbd8a; --shadow:0 1px 3px rgba(0,0,0,.4);
     --lane-producer:#1b2327; --lane-matcher:#272013; --lane-main:#1f1d28;
+    --lane-writer:#17231a; --lane-http:#261a1f;
     --lane-edge:#3a3222; --boundary:#3a2d16; --wire:#897f68; --box:#201b12;
   }
 }
@@ -37,6 +40,7 @@
   --ink:#f1e9d8; --ink-muted:#a89d86; --accent:#e0a34a; --accent-soft:#3a2d16;
   --border:#3a3222; --success:#7bbd8a; --shadow:0 1px 3px rgba(0,0,0,.4);
   --lane-producer:#1b2327; --lane-matcher:#272013; --lane-main:#1f1d28;
+    --lane-writer:#17231a; --lane-http:#261a1f;
   --lane-edge:#3a3222; --boundary:#3a2d16; --wire:#897f68; --box:#201b12;
 }
 
@@ -146,16 +150,17 @@ footer a{color:var(--accent)}
 <header class="top">
   <p class="eyebrow">Limit order book &middot; Java</p>
   <h1>System Architecture</h1>
-  <p class="dek">How the pieces fit together: three threads, two boundaries between them, and one
-  rule that explains nearly every design decision &mdash; the order book is touched by exactly one
-  thread, and nothing but immutable values ever crosses from it to another.</p>
+  <p class="dek">How the pieces fit together: four named threads plus a virtual thread per HTTP
+  request, three boundaries between them, and one rule that explains nearly every design
+  decision - the order book is touched by exactly one thread, and nothing but immutable values
+  ever crosses from it to another.</p>
 </header>
 
 <h2>The pipeline</h2>
 
 <div class="diagram">
-<svg id="pipe" viewBox="0 0 820 772" role="img"
-     aria-label="Pipeline diagram: a producer thread generates orders into a blocking queue, a matcher thread drains it into the matching engine and order book, and publishes immutable snapshots that the main thread renders.">
+<svg id="pipe" viewBox="0 0 900 856" role="img"
+     aria-label="Pipeline diagram: a producer thread generates orders into a blocking queue; a matcher thread drains it into the matching engine and order book, then fans out to a trade queue and an atomic snapshot reference; a writer thread appends trades to CSV while the main thread renders and an HTTP server serves JSON.">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
             orient="auto-start-reverse">
@@ -164,111 +169,154 @@ footer a{color:var(--accent)}
   </defs>
 
   <!-- lane: producer -->
-  <rect x="16" y="60" width="788" height="124" rx="10" fill="var(--lane-producer)" class="svg-lane"/>
-  <text x="32" y="80" class="svg-lane-label">PRODUCER THREAD</text>
+  <rect x="16" y="56" width="868" height="124" rx="10" fill="var(--lane-producer)" class="svg-lane"/>
+  <text x="32" y="76" class="svg-lane-label">PRODUCER THREAD</text>
 
-  <a class="node" href="#marketdata"><rect x="48" y="104" width="168" height="48" rx="7" class="svg-box"/>
-    <text x="132" y="126" text-anchor="middle" class="svg-t svg-mono">MidPriceWalk</text>
-    <text x="132" y="141" text-anchor="middle" class="svg-t-sm">bounded random walk</text></a>
-  <path class="wire" d="M216,128 L246,128"/>
+  <a class="node" href="#marketdata"><rect x="48" y="100" width="180" height="48" rx="7" class="svg-box"/>
+    <text x="138" y="122" text-anchor="middle" class="svg-t svg-mono">MidPriceWalk</text>
+    <text x="138" y="137" text-anchor="middle" class="svg-t-sm">bounded random walk</text></a>
+  <path class="wire" d="M228,124 L258,124"/>
 
-  <a class="node" href="#marketdata"><rect x="252" y="104" width="196" height="48" rx="7" class="svg-box"/>
-    <text x="350" y="126" text-anchor="middle" class="svg-t svg-mono">MarketDataGenerator</text>
-    <text x="350" y="141" text-anchor="middle" class="svg-t-sm">mid &#8594; limit order</text></a>
-  <path class="wire" d="M448,128 L478,128"/>
+  <a class="node" href="#marketdata"><rect x="264" y="100" width="208" height="48" rx="7" class="svg-box"/>
+    <text x="368" y="122" text-anchor="middle" class="svg-t svg-mono">MarketDataGenerator</text>
+    <text x="368" y="137" text-anchor="middle" class="svg-t-sm">mid &#8594; limit order</text></a>
+  <path class="wire" d="M472,124 L502,124"/>
 
-  <a class="node" href="#marketdata"><rect x="484" y="104" width="176" height="48" rx="7" class="svg-box-accent"/>
-    <text x="572" y="126" text-anchor="middle" class="svg-t svg-mono">OrderFlowDriver</text>
-    <text x="572" y="141" text-anchor="middle" class="svg-t-sm">owns the thread, paces it</text></a>
+  <a class="node" href="#marketdata"><rect x="508" y="100" width="190" height="48" rx="7" class="svg-box-accent"/>
+    <text x="603" y="122" text-anchor="middle" class="svg-t svg-mono">OrderFlowDriver</text>
+    <text x="603" y="137" text-anchor="middle" class="svg-t-sm">owns the thread, paces it</text></a>
 
   <!-- boundary 1: handoff -->
-  <path class="wire" d="M572,152 L572,204"/>
-  <text x="584" y="176" class="wire-label">submit() &#8594; put(), blocks when full</text>
+  <path class="wire" d="M603,148 L603,200"/>
+  <text x="615" y="172" class="wire-label">submit() &#8594; put(), blocks when full</text>
 
-  <rect x="16" y="208" width="788" height="78" rx="10" fill="var(--boundary)" class="svg-lane"/>
-  <text x="32" y="230" class="svg-lane-label">BOUNDARY 1 &#183; HANDOFF</text>
-  <text x="32" y="258" class="svg-t svg-mono">LinkedBlockingQueue&lt;Order&gt;</text>
-  <text x="32" y="274" class="svg-t-sm">capacity 1000 &#183; back-pressures the producer when full</text>
+  <rect x="16" y="204" width="868" height="78" rx="10" fill="var(--boundary)" class="svg-lane"/>
+  <text x="32" y="226" class="svg-lane-label">BOUNDARY 1 &#183; ORDER HANDOFF</text>
+  <text x="32" y="252" class="svg-t svg-mono">LinkedBlockingQueue&lt;Order&gt;</text>
+  <text x="32" y="270" class="svg-t-sm">capacity 1000 &#183; back-pressures the producer when full</text>
   <g>
-    <rect x="474" y="240" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
-    <rect x="506" y="240" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
-    <rect x="538" y="240" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
-    <rect x="570" y="240" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
-    <rect x="602" y="240" width="26" height="28" rx="4" fill="none" stroke="var(--lane-edge)" stroke-dasharray="3 3"/>
-    <rect x="634" y="240" width="26" height="28" rx="4" fill="none" stroke="var(--lane-edge)" stroke-dasharray="3 3"/>
-    <rect x="666" y="240" width="26" height="28" rx="4" fill="none" stroke="var(--lane-edge)" stroke-dasharray="3 3"/>
-    <text x="704" y="259" class="svg-t-sm">FIFO</text>
+    <rect x="500" y="236" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
+    <rect x="532" y="236" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
+    <rect x="564" y="236" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
+    <rect x="596" y="236" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
+    <rect x="628" y="236" width="26" height="28" rx="4" fill="none" stroke="var(--lane-edge)" stroke-dasharray="3 3"/>
+    <rect x="660" y="236" width="26" height="28" rx="4" fill="none" stroke="var(--lane-edge)" stroke-dasharray="3 3"/>
+    <rect x="692" y="236" width="26" height="28" rx="4" fill="none" stroke="var(--lane-edge)" stroke-dasharray="3 3"/>
+    <text x="730" y="255" class="svg-t-sm">FIFO</text>
   </g>
 
-  <path class="wire" d="M132,286 L132,330"/>
-  <text x="146" y="304" class="wire-label">take(), blocks when empty</text>
+  <path class="wire" d="M138,282 L138,336"/>
+  <text x="152" y="304" class="wire-label">take(), blocks when empty</text>
 
   <!-- lane: matcher -->
-  <rect x="16" y="312" width="788" height="208" rx="10" fill="var(--lane-matcher)" class="svg-lane"/>
-  <text x="600" y="332" class="svg-lane-label">MATCHER THREAD &#183; THE SINGLE WRITER</text>
+  <rect x="16" y="308" width="868" height="252" rx="10" fill="var(--lane-matcher)" class="svg-lane"/>
+  <text x="600" y="328" class="svg-lane-label">MATCHER THREAD &#183; THE SINGLE WRITER</text>
 
-  <a class="node" href="#gateway"><rect x="48" y="344" width="168" height="48" rx="7" class="svg-box-accent"/>
-    <text x="132" y="366" text-anchor="middle" class="svg-t svg-mono">OrderGateway</text>
-    <text x="132" y="381" text-anchor="middle" class="svg-t-sm">matchLoop()</text></a>
-  <path class="wire" d="M216,368 L250,368"/>
+  <a class="node" href="#gateway"><rect x="48" y="340" width="180" height="48" rx="7" class="svg-box-accent"/>
+    <text x="138" y="362" text-anchor="middle" class="svg-t svg-mono">OrderGateway</text>
+    <text x="138" y="377" text-anchor="middle" class="svg-t-sm">matchLoop()</text></a>
+  <path class="wire" d="M228,364 L258,364"/>
 
-  <a class="node" href="#engine"><rect x="256" y="344" width="212" height="48" rx="7" class="svg-box"/>
-    <text x="362" y="366" text-anchor="middle" class="svg-t svg-mono">PriceTimeMatchingEngine</text>
-    <text x="362" y="381" text-anchor="middle" class="svg-t-sm">crosses, emits trades</text></a>
-  <path class="wire" d="M468,368 L502,368"/>
+  <a class="node" href="#engine"><rect x="264" y="340" width="224" height="48" rx="7" class="svg-box"/>
+    <text x="376" y="362" text-anchor="middle" class="svg-t svg-mono">PriceTimeMatchingEngine</text>
+    <text x="376" y="377" text-anchor="middle" class="svg-t-sm">crosses, emits trades</text></a>
+  <path class="wire" d="M488,364 L518,364"/>
 
-  <a class="node" href="#book"><rect x="508" y="344" width="148" height="48" rx="7" class="svg-box"/>
-    <text x="582" y="366" text-anchor="middle" class="svg-t svg-mono">OrderBook</text>
-    <text x="582" y="381" text-anchor="middle" class="svg-t-sm">2 TreeMaps + index</text></a>
-  <path class="wire" d="M656,368 L666,368"/>
+  <a class="node" href="#book"><rect x="524" y="340" width="160" height="48" rx="7" class="svg-box"/>
+    <text x="604" y="362" text-anchor="middle" class="svg-t svg-mono">OrderBook</text>
+    <text x="604" y="377" text-anchor="middle" class="svg-t-sm">2 TreeMaps + index</text></a>
+  <path class="wire" d="M684,364 L700,364"/>
 
-  <a class="node" href="#book"><rect x="672" y="344" width="124" height="48" rx="7" class="svg-box"/>
-    <text x="734" y="366" text-anchor="middle" class="svg-t svg-mono">PriceLevel</text>
-    <text x="734" y="381" text-anchor="middle" class="svg-t-sm">ArrayDeque, FIFO</text></a>
+  <a class="node" href="#book"><rect x="706" y="340" width="136" height="48" rx="7" class="svg-box"/>
+    <text x="774" y="362" text-anchor="middle" class="svg-t svg-mono">PriceLevel</text>
+    <text x="774" y="377" text-anchor="middle" class="svg-t-sm">ArrayDeque, FIFO</text></a>
 
-  <path class="wire" d="M132,392 L132,424"/>
-  <a class="node" href="#gateway"><rect x="48" y="426" width="212" height="48" rx="7" class="svg-box"/>
-    <text x="154" y="448" text-anchor="middle" class="svg-t svg-mono">MatchListener</text>
-    <text x="154" y="463" text-anchor="middle" class="svg-t-sm">your callback, matcher thread</text></a>
+  <path class="wire" d="M138,388 L138,418"/>
+  <a class="node" href="#gateway"><rect x="48" y="420" width="224" height="48" rx="7" class="svg-box"/>
+    <text x="160" y="442" text-anchor="middle" class="svg-t svg-mono">MatchListener</text>
+    <text x="160" y="457" text-anchor="middle" class="svg-t-sm">your callback, matcher thread</text></a>
 
-  <path class="wire-dash" d="M260,450 L582,450 L582,396"/>
-  <text x="300" y="444" class="wire-label">book.snapshot(5) &#8212; legal, same thread</text>
+  <path class="wire-dash" d="M272,444 L604,444 L604,392"/>
+  <text x="312" y="438" class="wire-label">book.snapshot(5) - legal, same thread</text>
 
-  <!-- boundary 2: publication -->
-  <path class="wire" d="M154,474 L154,540"/>
-  <text x="166" y="508" class="wire-label">latest.set(snapshot)</text>
+  <!-- the listener fans out to two consumers, in order -->
+  <path class="wire" d="M160,468 L160,494"/>
+  <path class="wire" d="M160,481 L560,481 L560,494"/>
 
-  <rect x="16" y="544" width="788" height="78" rx="10" fill="var(--boundary)" class="svg-lane"/>
-  <text x="32" y="566" class="svg-lane-label">BOUNDARY 2 &#183; PUBLICATION</text>
-  <text x="32" y="594" class="svg-t svg-mono">AtomicReference&lt;BookSnapshot&gt;</text>
-  <text x="32" y="610" class="svg-t-sm">an immutable value &#183; the book itself never crosses</text>
-  <a class="node" href="#book"><rect x="568" y="558" width="208" height="46" rx="7" class="svg-box"/>
-    <text x="672" y="578" text-anchor="middle" class="svg-t svg-mono">BookSnapshot</text>
-    <text x="672" y="592" text-anchor="middle" class="svg-t-sm">record, defensive copies</text></a>
+  <a class="node" href="#audit"><rect x="48" y="494" width="224" height="48" rx="7" class="svg-box"/>
+    <text x="160" y="516" text-anchor="middle" class="svg-t svg-mono">TradeLogger</text>
+    <text x="160" y="531" text-anchor="middle" class="svg-t-sm">onMatch(): queues trades</text></a>
 
-  <path class="wire" d="M154,622 L154,674"/>
-  <text x="166" y="652" class="wire-label">latest.get()</text>
+  <a class="node" href="#app"><rect x="448" y="494" width="224" height="48" rx="7" class="svg-box"/>
+    <text x="560" y="516" text-anchor="middle" class="svg-t svg-mono">publishSnapshot</text>
+    <text x="560" y="531" text-anchor="middle" class="svg-t-sm">lambda in Main</text></a>
+  <text x="688" y="512" class="wire-label">andThen(): both, in order</text>
+  <text x="688" y="528" class="wire-label">audit first, display second</text>
+
+  <!-- boundaries 2 and 3, side by side -->
+  <path class="wire" d="M160,542 L160,600"/>
+  <text x="174" y="574" class="wire-label">offer(trade), never blocks</text>
+  <path class="wire" d="M560,542 L560,600"/>
+  <text x="574" y="574" class="wire-label">latest.set(snapshot)</text>
+
+  <rect x="16" y="604" width="424" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
+  <text x="32" y="626" class="svg-lane-label">BOUNDARY 2 &#183; AUDIT</text>
+  <text x="32" y="652" class="svg-t svg-mono">LinkedBlockingQueue&lt;Trade&gt;</text>
+  <text x="32" y="670" class="svg-t-sm">capacity 100,000 &#183; drops before stalling the matcher</text>
+
+  <rect x="460" y="604" width="424" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
+  <text x="476" y="626" class="svg-lane-label">BOUNDARY 3 &#183; PUBLICATION</text>
+  <text x="476" y="652" class="svg-t svg-mono">AtomicReference&lt;Status&gt;</text>
+  <text x="476" y="670" class="svg-t-sm">immutable value &#183; the book itself never crosses</text>
+
+  <path class="wire" d="M160,684 L160,708"/>
+  <text x="174" y="700" class="wire-label">take(), drains</text>
+  <path class="wire" d="M560,684 L560,708"/>
+  <path class="wire" d="M778,684 L778,708"/>
+
+  <!-- lane: trade writer -->
+  <rect x="16" y="710" width="424" height="124" rx="10" fill="var(--lane-writer)" class="svg-lane"/>
+  <text x="32" y="730" class="svg-lane-label">TRADE WRITER THREAD</text>
+
+  <a class="node" href="#audit"><rect x="48" y="752" width="212" height="48" rx="7" class="svg-box-accent"/>
+    <text x="154" y="774" text-anchor="middle" class="svg-t svg-mono">TradeLogger</text>
+    <text x="154" y="789" text-anchor="middle" class="svg-t-sm">writeLoop()</text></a>
+  <path class="wire" d="M260,776 L284,776"/>
+  <rect x="290" y="752" width="134" height="48" rx="7" class="svg-box"/>
+  <text x="357" y="774" text-anchor="middle" class="svg-t svg-mono">trades.csv</text>
+  <text x="357" y="789" text-anchor="middle" class="svg-t-sm">CSV audit trail</text>
+  <text x="48" y="820" class="svg-t-sm">flushes whenever the queue empties</text>
 
   <!-- lane: main -->
-  <rect x="16" y="648" width="788" height="108" rx="10" fill="var(--lane-main)" class="svg-lane"/>
-  <text x="640" y="668" class="svg-lane-label">MAIN THREAD</text>
+  <rect x="460" y="710" width="200" height="124" rx="10" fill="var(--lane-main)" class="svg-lane"/>
+  <text x="476" y="730" class="svg-lane-label">MAIN THREAD</text>
 
-  <a class="node" href="#app"><rect x="48" y="678" width="212" height="48" rx="7" class="svg-box-accent"/>
-    <text x="154" y="700" text-anchor="middle" class="svg-t svg-mono">Main</text>
-    <text x="154" y="715" text-anchor="middle" class="svg-t-sm">renders, 5 frames per second</text></a>
-  <text x="284" y="698" class="svg-t-sm">Slow terminal I/O lives here, off the matcher thread,</text>
-  <text x="284" y="714" class="svg-t-sm">so drawing can never hold up matching.</text>
+  <a class="node" href="#app"><rect x="476" y="752" width="168" height="48" rx="7" class="svg-box-accent"/>
+    <text x="560" y="774" text-anchor="middle" class="svg-t svg-mono">Main</text>
+    <text x="560" y="789" text-anchor="middle" class="svg-t-sm">renders, 5 fps</text></a>
+  <text x="476" y="820" class="svg-t-sm">terminal I/O, off the matcher</text>
+
+  <!-- lane: http -->
+  <rect x="672" y="710" width="212" height="124" rx="10" fill="var(--lane-http)" class="svg-lane"/>
+  <text x="688" y="730" class="svg-lane-label">HTTP &#183; VIRTUAL THREADS</text>
+
+  <a class="node" href="#feed"><rect x="688" y="752" width="180" height="48" rx="7" class="svg-box-accent"/>
+    <text x="778" y="774" text-anchor="middle" class="svg-t svg-mono">BookFeedServer</text>
+    <text x="778" y="789" text-anchor="middle" class="svg-t-sm">GET /book</text></a>
+  <text x="688" y="820" class="svg-t-sm">MarketDataSnapshot &#8594; JSON</text>
 </svg>
 </div>
 
 <div class="legend">
   <span><i style="background:var(--lane-producer)"></i>producer thread</span>
   <span><i style="background:var(--lane-matcher)"></i>matcher thread</span>
+  <span><i style="background:var(--lane-writer)"></i>trade writer thread</span>
   <span><i style="background:var(--lane-main)"></i>main thread</span>
+  <span><i style="background:var(--lane-http)"></i>http virtual threads</span>
   <span><i style="background:var(--boundary)"></i>thread boundary</span>
 </div>
 
-<h2>The three threads</h2>
+<h2>The threads</h2>
 
 <table>
   <thead><tr><th>Thread</th><th>Created by</th><th>Owns</th><th>How it stops</th></tr></thead>
@@ -283,23 +331,43 @@ footer a{color:var(--accent)}
       <td><code>producer</code></td>
       <td><code>OrderFlowDriver.start()</code></td>
       <td><code>MidPriceWalk</code>, <code>MarketDataGenerator</code></td>
-      <td>flag <em>and</em> <code>interrupt()</code> &mdash; the flag alone cannot reach a
+      <td>flag <em>and</em> <code>interrupt()</code> - the flag alone cannot reach a
           thread parked in <code>put()</code></td>
     </tr>
     <tr>
       <td><code>matcher</code></td>
       <td><code>OrderGateway.start()</code></td>
       <td><code>OrderBook</code>, every <code>PriceLevel</code>, every resting <code>Order</code></td>
-      <td>a poison-pill order, so the queued backlog drains first</td>
+      <td>a poison-pill order, so the queued backlog drains first. Offered with a timeout, not
+          <code>put()</code>, so a full queue cannot make shutdown hang; interrupt is the
+          last-resort fallback</td>
+    </tr>
+    <tr>
+      <td><code>trade-writer</code></td>
+      <td><code>TradeLogger.start()</code></td>
+      <td>the <code>BufferedWriter</code> on <code>trades.csv</code></td>
+      <td>a poison-pill trade, for the same reason: it owes the backlog it accepted</td>
+    </tr>
+    <tr>
+      <td>one virtual thread <em>per HTTP request</em></td>
+      <td><code>BookFeedServer</code>'s executor</td>
+      <td>nothing. It reads a published snapshot and shares no state at all</td>
+      <td><code>server.stop(1)</code>, then the executor is closed - which
+          <code>HttpServer.stop</code> does not do for you</td>
     </tr>
   </tbody>
 </table>
 
-<p class="muted">The two shutdown mechanisms differ because the threads differ. A
+<p class="muted">The shutdown mechanisms differ because the threads differ. A
 <strong>consumer</strong> has already accepted work it owes, so it must be stopped <em>in
-order</em>, by a sentinel that arrives after the last real order. A <strong>producer</strong>
-owes nothing yet and may be stopped immediately &mdash; and must be, since nothing feeds it,
-so no sentinel could ever reach it.</p>
+order</em>, by a sentinel that arrives behind the last real item - which is why both the matcher
+and the writer take a poison pill. A <strong>producer</strong> owes nothing yet and may be
+stopped immediately - and must be, since nothing feeds it, so no sentinel could ever reach it.
+Hence the producer is interrupted and the consumers are not.</p>
+
+<p class="muted">Order matters at both ends. Start inwards-out, each consumer before whatever
+feeds it: trade log, gateway, driver, feed server. Stop in the exact reverse, so nothing is
+still submitting to a component that has already closed.</p>
 
 <h2>Life of one order</h2>
 
@@ -319,34 +387,50 @@ so no sentinel could ever reach it.</p>
   <li><span class="who">matcher thread</span><b>Rested or discarded.</b> An unfilled limit
       remainder joins the back of its price level; a market remainder is cancelled.</li>
   <li><span class="who">matcher thread</span><b>Reported.</b> The gateway calls the
-      <code>MatchListener</code> with the order and its trades. The listener builds a
-      <code>BookSnapshot</code> &mdash; legal, because it is running on the matcher thread &mdash;
-      and publishes it.</li>
+      <code>MatchListener</code> with the order and its trades, then counts both. One listener,
+      composed with <code>andThen</code>, so two things happen in a fixed order: the audit log
+      first, the display second. If the display throws, the trade has already been recorded.</li>
+  <li><span class="who">matcher thread</span><b>Queued for audit.</b>
+      <code>TradeLogger.onMatch</code> <code>offer()</code>s each trade and returns. It never
+      blocks and never touches the disk, because the matcher is waiting on it.</li>
+  <li><span class="who">matcher thread</span><b>Published.</b> The second listener builds a
+      <code>BookSnapshot</code> - legal, because it is running on the matcher thread - and
+      <code>set()</code>s it on the atomic reference along with the running counts.</li>
+  <li><span class="who">trade-writer thread</span><b>Written.</b> The writer takes the trade,
+      appends one CSV row, and flushes whenever it has caught up. Slow I/O, off the hot path.</li>
   <li><span class="who">main thread</span><b>Rendered.</b> The renderer reads the latest snapshot
-      and redraws. It never sees the book.</li>
+      and redraws, five times a second. It never sees the book.</li>
+  <li><span class="who">a virtual thread</span><b>Served.</b> Independently, any HTTP request
+      for <code>/book</code> reads that same reference, converts it to a
+      <code>MarketDataSnapshot</code> and writes JSON. Many requests can run at once precisely
+      because the value they read cannot change under them.</li>
 </ol>
+
+<p class="muted">Steps 7 to 9 are three readers of one write. Adding the HTTP feed needed no
+change to the matcher at all, which is the practical payoff of publishing immutable values
+instead of sharing a structure.</p>
 
 <h2>Packages</h2>
 
 <div class="pkg" id="model">
   <h4>com.mwang.model</h4>
   <ul>
-    <li><b>Order</b> &mdash; an entity: identity outlives state, so a class, not a record. One
+    <li><b>Order</b> - an entity: identity outlives state, so a class, not a record. One
       mutable field, <code>remainingQuantity</code>. Prices are scaled <code>long</code> ticks,
       never <code>double</code>.</li>
-    <li><b>Trade</b> &mdash; a value: immutable record, priced at the resting order's price.</li>
-    <li><b>Side</b>, <b>OrderType</b> &mdash; enums.</li>
+    <li><b>Trade</b> - a value: immutable record, priced at the resting order's price.</li>
+    <li><b>Side</b>, <b>OrderType</b> - enums.</li>
   </ul>
 </div>
 
 <div class="pkg" id="book">
   <h4>com.mwang.book</h4>
   <ul>
-    <li><b>OrderBook</b> &mdash; two <code>TreeMap</code>s (bids reversed, asks natural) plus a
+    <li><b>OrderBook</b> - two <code>TreeMap</code>s (bids reversed, asks natural) plus a
       <code>HashMap</code> index for O(1) cancel. Not thread-safe, by design.</li>
-    <li><b>PriceLevel</b> &mdash; an <code>ArrayDeque</code>; the queue <em>is</em> the time
+    <li><b>PriceLevel</b> - an <code>ArrayDeque</code>; the queue <em>is</em> the time
       priority, which is why colliding timestamps are harmless.</li>
-    <li><b>DepthLevel</b>, <b>BookSnapshot</b> &mdash; immutable views. The snapshot is the only
+    <li><b>DepthLevel</b>, <b>BookSnapshot</b> - immutable views. The snapshot is the only
       thing permitted to leave the matcher thread.</li>
   </ul>
 </div>
@@ -354,8 +438,8 @@ so no sentinel could ever reach it.</p>
 <div class="pkg" id="engine">
   <h4>com.mwang.engine</h4>
   <ul>
-    <li><b>MatchingEngine</b> &mdash; the abstraction, so a pro-rata policy could drop in.</li>
-    <li><b>PriceTimeMatchingEngine</b> &mdash; price-time priority, trades at the resting price,
+    <li><b>MatchingEngine</b> - the abstraction, so a pro-rata policy could drop in.</li>
+    <li><b>PriceTimeMatchingEngine</b> - price-time priority, trades at the resting price,
       limit remainder rests, market remainder cancels, self-trades reject the incoming order.</li>
   </ul>
 </div>
@@ -363,9 +447,9 @@ so no sentinel could ever reach it.</p>
 <div class="pkg" id="gateway">
   <h4>com.mwang.gateway</h4>
   <ul>
-    <li><b>OrderGateway</b> &mdash; the thread boundary. Many producers may call
+    <li><b>OrderGateway</b> - the thread boundary. Many producers may call
       <code>submit()</code>; exactly one thread ever reaches the engine.</li>
-    <li><b>MatchListener</b> &mdash; the way results escape the matcher. Runs <em>on</em> the
+    <li><b>MatchListener</b> - the way results escape the matcher. Runs <em>on</em> the
       matcher thread, so it may read the book but must be fast, and anything it throws is
       caught so a broken listener cannot kill the exchange.</li>
   </ul>
@@ -374,18 +458,45 @@ so no sentinel could ever reach it.</p>
 <div class="pkg" id="marketdata">
   <h4>com.mwang.marketdata</h4>
   <ul>
-    <li><b>MidPriceWalk</b> &mdash; bounded random walk, seeded, clamped so the mid stays positive.</li>
-    <li><b>MarketDataGenerator</b> &mdash; one mid becomes one order. Rejects a single account,
+    <li><b>MidPriceWalk</b> - bounded random walk, seeded, clamped so the mid stays positive.</li>
+    <li><b>MarketDataGenerator</b> - one mid becomes one order. Rejects a single account,
       because self-trade prevention would then reject every match and nothing would ever trade.</li>
-    <li><b>OrderFlowDriver</b> &mdash; owns the producer thread and its pacing.</li>
+    <li><b>OrderFlowDriver</b> - owns the producer thread and its pacing.</li>
+  </ul>
+</div>
+
+<div class="pkg" id="audit">
+  <h4>com.mwang.audit</h4>
+  <ul>
+    <li><b>TradeLogger</b> - a <code>MatchListener</code> that is also a thread owner. Queues on
+      the matcher thread, writes on its own. Uses <code>offer()</code> rather than
+      <code>put()</code>, because the matching engine is not a caller that can be made to wait;
+      drops are counted, logged and reported at close, never silent. This is the opposite
+      trade-off from the gateway, and deliberately so.</li>
+  </ul>
+</div>
+
+<div class="pkg" id="feed">
+  <h4>com.mwang.feed</h4>
+  <ul>
+    <li><b>MarketDataSnapshot</b> - the published wire format. Separate from
+      <code>BookSnapshot</code> so the book package stays free of serialisation concerns, and so
+      the <code>-1</code> empty-side sentinel reaches consumers as <code>null</code> rather than
+      as a price of minus one cent. Component order <em>is</em> the JSON field order, so a test
+      pins the exact string.</li>
+    <li><b>BookFeedServer</b> - <code>GET /book</code> over the JDK's own
+      <code>HttpServer</code>. Takes a <code>Supplier</code>, not the book, so it cannot reach
+      matcher-owned state even by mistake.</li>
   </ul>
 </div>
 
 <div class="pkg" id="app">
   <h4>com.mwang &middot; com.mwang.exception</h4>
   <ul>
-    <li><b>Main</b> &mdash; wires everything, starts forwards, stops backwards, renders snapshots.</li>
-    <li><b>OrderException</b> and its two subtypes &mdash; business rejections the gateway catches
+    <li><b>Main</b> - wires everything, starts forwards, stops backwards, renders snapshots.
+      Owns the <code>AtomicReference</code> and the listener lambda that writes to it; every
+      component below it stays unaware of the others.</li>
+    <li><b>OrderException</b> and its two subtypes - business rejections the gateway catches
       and logs, as distinct from programming errors, which are left to crash.</li>
   </ul>
 </div>
@@ -395,7 +506,7 @@ so no sentinel could ever reach it.</p>
 <div class="rule">
   <b>Single writer</b>
   <p>One thread owns the book. No locks on the matching path, no contention, and the order of
-  execution is fixed &mdash; which is what makes the engine deterministic, a regulatory
+  execution is fixed - which is what makes the engine deterministic, a regulatory
   requirement for a real exchange and a testable property here.</p>
 </div>
 
@@ -415,8 +526,13 @@ so no sentinel could ever reach it.</p>
 <div class="rule">
   <b>Slow work belongs off the matcher</b>
   <p>Building a snapshot takes nanoseconds and happens on the matcher thread. Drawing it to a
-  terminal takes milliseconds and happens on main. The same split will apply to the trade log:
-  the listener hands trades to a queue, and another thread writes the file.</p>
+  terminal, appending it to a file and serialising it to JSON all take orders of magnitude
+  longer, and all happen somewhere else. The trade log is the clearest case: the listener
+  <code>offer()</code>s to a queue in nanoseconds and the writer thread does the I/O.</p>
+  <p>The same reasoning sets the log levels. Logback's appenders are synchronous, so a
+  per-trade <code>INFO</code> line would put file and console I/O back on the matcher thread -
+  undoing the whole arrangement. Trades log at <code>DEBUG</code>; <code>INFO</code> carries
+  lifecycle and run totals.</p>
 </div>
 
 <div class="rule">
@@ -424,12 +540,17 @@ so no sentinel could ever reach it.</p>
   <p>A bounded queue plus a blocking <code>put()</code> means a fast producer is slowed to the
   matcher's rate rather than exhausting memory. A real exchange would instead
   <code>offer()</code> and reject, because it cannot let a slow matcher stall its network
-  threads &mdash; but it must never silently drop.</p>
+  threads - but it must never silently drop.</p>
+  <p>Which to use depends on who is calling. At boundary 1 the caller is a client, who can
+  wait, so blocking is right. At boundary 2 the caller is the matching engine, which cannot, so
+  <code>offer()</code> is right and the rare drop is counted and reported. Same queue type,
+  opposite decision, because the question is never "block or drop" in the abstract.</p>
 </div>
 
 <footer>
   Companion to <a href="roadmap.html">the roadmap</a> and the phase documents in
-  <code>docs/phases/</code>. Diagram reflects the code as of Phase&nbsp;4.
+  <code>docs/phases/</code>. Reflects the code at the end of Phase&nbsp;4: 187 tests, four named
+  threads, one virtual thread per request.
 </footer>
 
 </div>

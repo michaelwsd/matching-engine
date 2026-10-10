@@ -40,7 +40,7 @@ carry state between them.
 
 Incoming: **BUY 150 @ 10001**, account 9, id `100`
 
-`10001 >= 10001` ✓ — matches `A1` exactly.
+`10001 >= 10001` ✓ - matches `A1` exactly.
 
 **Trades**
 
@@ -48,7 +48,7 @@ Incoming: **BUY 150 @ 10001**, account 9, id `100`
 |---|---|---|---|
 | 100 | A1 | 10001 | 150 |
 
-**Book after** — the 10001 level is emptied and deleted; the incoming order does not rest.
+**Book after** - the 10001 level is emptied and deleted; the incoming order does not rest.
 
 ```
    200 @ 9998               10002 @ 300
@@ -70,7 +70,7 @@ stops. The unfilled 50 rests as a **limit order on the bid side**.
 |---|---|---|---|
 | 101 | A1 | 10001 | 150 |
 
-**Book after** — note the remainder becomes the new best bid, narrowing the spread to 1.
+**Book after** - note the remainder becomes the new best bid, narrowing the spread to 1.
 
 ```
     50 @ 10001  (101)       10002 @ 300
@@ -112,7 +112,7 @@ Incoming: **BUY 400 @ 10002**, account 9, id `103`
 incoming 400/400 filled
 ```
 
-**Trades** — one incoming order, two trades, two different prices.
+**Trades** - one incoming order, two trades, two different prices.
 
 | buyOrderId | sellOrderId | price | qty |
 |---|---|---|---|
@@ -134,9 +134,9 @@ Incoming: **BUY 100 @ 9999**, account 9, id `104`
 
 `9999 >= 10001` is false. No matching occurs at all.
 
-**Trades** — none.
+**Trades** - none.
 
-**Book after** — becomes the new best bid.
+**Book after** - becomes the new best bid.
 
 ```
    100 @ 9999   (104)       10001 @ 150
@@ -182,7 +182,7 @@ a market order has no price and cannot rest.
 | 106 | A1 | 10001 | 150 |
 | 106 | A2 | 10002 | 300 |
 
-**Book after** — ask side completely empty, nothing rests from the incoming order.
+**Book after** - ask side completely empty, nothing rests from the incoming order.
 
 ```
    200 @ 9998               (empty)
@@ -199,9 +199,9 @@ Incoming: **MARKET BUY 100**, account 9, id `107`
 
 Nothing to match against. The entire order is cancelled.
 
-**Trades** — none.
+**Trades** - none.
 
-**Book after** — unchanged.
+**Book after** - unchanged.
 
 > Design question this raises: an empty trade list means both "nothing matched" and
 > "rejected". If the caller needs to tell those apart, `submit` should return something
@@ -216,9 +216,9 @@ Incoming: **BUY 200 @ 10001**, **account 2**, id `108`
 `A1` is also account 2. Under cancel-newest, the incoming order is rejected before any
 matching happens.
 
-**Trades** — none.
+**Trades** - none.
 
-**Book after** — unchanged. `A1` keeps its queue position.
+**Book after** - unchanged. `A1` keeps its queue position.
 
 > Sub-decision to settle in the implementation: if the incoming order would match a
 > self-owned order *and* a third party's order, is the whole incoming order rejected, or
@@ -240,7 +240,7 @@ Incoming: **SELL 600 @ 9997**, account 9, id `109`
 incoming 600/600 filled
 ```
 
-**Trades** — note the incoming order is now the *sell* side.
+**Trades** - note the incoming order is now the *sell* side.
 
 | buyOrderId | sellOrderId | price | qty |
 |---|---|---|---|

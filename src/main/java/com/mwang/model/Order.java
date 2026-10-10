@@ -100,14 +100,18 @@ public class Order {
         return orderId;
     }
 
+    /** @return the limit price in ticks. Meaningless for a {@link OrderType#MARKET} order. */
     public long getPrice() {
         return price;
     }
 
+    /** @return the quantity submitted, which never changes. Contrast
+     *  {@link #getRemainingQuantity()}. */
     public int getOriginalQuantity() {
         return originalQuantity;
     }
 
+    /** @return the quantity still available to fill, which shrinks as this order trades */
     public int getRemainingQuantity() {
         return remainingQuantity;
     }
