@@ -137,8 +137,8 @@ public class Main {
                 walk, QUOTE_OFFSET, MIN_QUANTITY, MAX_QUANTITY, ACCOUNT_COUNT, GENERATOR_SEED);
         OrderFlowDriver driver = new OrderFlowDriver(generator, gateway, DRIVER_SEED);
 
-        // Reads the same published reference the renderer does - one get(), so the sequence
-        // and the depth it reports come from the same moment.
+        // implements the get() method in Supplier (functional interface)
+        // gets the latest snapshot and turns it into a market data snapshot
         BookFeedServer feedServer = new BookFeedServer(FEED_PORT, () -> {
             Status status = latest.get();
             // return a snapshot of the current book

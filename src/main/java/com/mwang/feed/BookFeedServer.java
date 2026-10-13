@@ -119,7 +119,7 @@ public final class BookFeedServer implements AutoCloseable {
                 respond(exchange, 404, "{\"error\":\"not found\"}");
                 return;
             }
-            // source.get hands back a market data snapshot, then turns into text
+            // source.get() hands back a market data snapshot, then turns into text
             respond(exchange, 200, mapper.writeValueAsString(source.get()));
         } catch (RuntimeException | JsonProcessingException e) {
             // An exception escaping a handler closes the connection with no status at all, so
