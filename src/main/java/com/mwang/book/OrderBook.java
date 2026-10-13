@@ -16,33 +16,28 @@ import java.util.TreeMap;
 /**
  * Every resting order for one instrument, organised by price and then by arrival time.
  *
- * <p>Three structures, kept in step:
- *
- * <ul>
- *   <li>{@code bids} and {@code asks} - one {@link TreeMap} per side, price to
- *       {@link PriceLevel}. Sorted, because "what is the best price" is the question the
- *       matching engine asks most often and a sorted map answers it with {@code firstKey()}.
- *       Bids sort in reverse so that <em>first</em> means highest bid and lowest ask on their
- *       respective sides, which lets the matching loop be written once instead of mirrored.
- *   <li>{@code ordersById} - a flat index, so cancelling is a lookup rather than a search.
- * </ul>
+ * <p>Three structures, kept in step. A {@link TreeMap} per side maps price to
+ * {@link PriceLevel}, sorted because "what is the best price" is what the engine asks most
+ * often and {@code firstKey()} answers it; bids sort in reverse so <em>first</em> means best on
+ * both sides, letting the matching loop be written once instead of mirrored. {@code ordersById}
+ * indexes orders flat, so cancelling is a lookup rather than a search.
  *
  * <p><strong>The invariant everything relies on:</strong> an order is in {@code ordersById} if
- * and only if it is in a price level. Every mutator here updates both, and no caller can reach
- * a level directly to break it.
+ * and only if it is in a price level. Every mutator updates both, and no caller can reach a
+ * level to break it.
  *
- * <p>This class decides <em>where</em> orders sit. It does not decide which ones match - that
- * is {@link com.mwang.engine.MatchingEngine}'s job.
+ * <p>Decides <em>where</em> orders sit, not which ones match - that is
+ * {@link com.mwang.engine.MatchingEngine}'s job.
  *
- * <p>Not thread-safe, and deliberately lock-free: it is confined to the gateway's single
- * matcher thread. {@link #snapshot(int)} is how its state reaches any other thread.
+ * <p>Not thread-safe, and deliberately lock-free: confined to the gateway's matcher thread.
+ * {@link #snapshot(int)} is how its state reaches any other thread.
  */
 public final class OrderBook {
 
     /**
-     * Returned by {@link #bestBid()} and {@link #bestAsk()} when that side of the book is
-     * empty. Safe as a sentinel because every real price is positive - {@link
-     * com.mwang.model.Order} rejects a limit order priced at zero or below.
+     * Returned by {@link #bestBid()} and {@link #bestAsk()} for an empty side. Safe as a
+     * sentinel because every real price is positive - {@link com.mwang.model.Order} rejects a
+     * limit priced at zero or below.
      */
     public static final long NO_PRICE = -1;
 
@@ -53,9 +48,8 @@ public final class OrderBook {
     /**
      * Rests an order on the book, at the back of the queue for its price.
      *
-     * @throws InvalidOrderException if an order with this id is already resting here. Reusing
-     *                               an id would make the id index ambiguous and leave one of
-     *                               the two orders impossible to cancel.
+     * @throws InvalidOrderException if this id is already resting here. A duplicate would make
+     *                               the id index ambiguous and leave one order uncancellable.
      */
     public void addOrder(Order order) {
         long orderId = order.getOrderId();
@@ -70,8 +64,8 @@ public final class OrderBook {
 
     /**
      * Removes an order at the client's request. Identical in effect to
-     * {@link #removeOrder(long)}; the separate name records <em>why</em> the order left the
-     * book, which Phase 3b's gateway needs in order to report back differently.
+     * {@link #removeOrder(long)}; the separate name records <em>why</em> it left the book,
+     * which a gateway needs in order to report back differently.
      *
      * @throws UnknownOrderException if no such order is resting here
      */
@@ -80,12 +74,9 @@ public final class OrderBook {
     }
 
     /**
-     * Takes an order off the book entirely - out of its price level, out of the id index, and
-     * deleting the level if that was its last order. Used both for client cancels and for
-     * resting orders the matching engine has filled completely.
-     *
-     * <p>Empty levels are deleted rather than kept, so {@code firstKey()} always names a price
-     * with liquidity behind it.
+     * Takes an order off the book entirely - out of its level, out of the id index, and deleting
+     * the level if that was its last order, so {@code firstKey()} always names a price with
+     * liquidity behind it. Used for client cancels and for fully filled resting orders alike.
      *
      * @throws UnknownOrderException if no such order is resting here
      */
@@ -106,12 +97,11 @@ public final class OrderBook {
     }
 
     /**
-     * The order at the front of the best price level on the given side - the next one that
-     * would fill. Empty when that side holds nothing.
+     * The order at the front of the best level on this side - the next one that would fill.
+     * Empty when the side holds nothing.
      *
-     * <p>Returns an {@link Order} rather than a price level on purpose: which level an order
-     * sits in is this class's business, and a caller holding a level could remove a filled
-     * order without updating the id index, leaving the two structures disagreeing.
+     * <p>Returns an {@link Order} rather than the level on purpose: a caller holding a level
+     * could remove a filled order without updating the id index, breaking the invariant.
      */
     public Optional<Order> peekBest(Side side) {
         TreeMap<Long, PriceLevel> book = bookFor(side);
@@ -144,10 +134,9 @@ public final class OrderBook {
     /**
      * An immutable view of the top of the book, safe to hand to another thread.
      *
-     * <p>Must be called from the thread that owns this book - the matcher - because it walks
-     * the same structures that {@link #addOrder} and {@link #removeOrder} mutate. What makes
-     * it useful is that the <em>result</em> is safe to publish anywhere, so a reader never
-     * needs a reference to the book itself.
+     * <p>Must be called from the thread that owns this book, since it walks the structures
+     * {@link #addOrder} and {@link #removeOrder} mutate. The <em>result</em> is safe to publish
+     * anywhere, so a reader never needs the book itself.
      *
      * @param levels how many price levels to include per side
      */
@@ -155,10 +144,7 @@ public final class OrderBook {
         return new BookSnapshot(bidDepth(levels), askDepth(levels), bestBid(), bestAsk());
     }
 
-    /**
-     * The side's map, with no side effects. Kept separate from level creation so that a read
-     * path cannot accidentally insert an empty level into the book it is reading.
-     */
+    /** The side's map, with no side effects - so a read path cannot insert an empty level. */
     private TreeMap<Long, PriceLevel> bookFor(Side side) {
         return side == Side.BUY ? bids : asks;
     }

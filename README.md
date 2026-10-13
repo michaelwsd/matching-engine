@@ -152,6 +152,7 @@ run.sh                      compile if needed, then run
 | `marketdata` | `MidPriceWalk`, `MarketDataGenerator`, `OrderFlowDriver` |
 | `audit` | `TradeLogger` |
 | `feed` | `MarketDataSnapshot`, `BookFeedServer` |
+| `strategy` | `Strategy`, `StrategyRunner` - the Phase 5 extension point |
 
 ## Design notes
 
@@ -212,13 +213,25 @@ Decisions worth recording, with the reason rather than just the rule.
   pulling - and a caller mutating a resting order directly would break the confinement every
   other decision here depends on. Being sealed makes the matcher's `switch` exhaustive, so a
   fifth command is a compile error until it is handled. `Shutdown` as a real case also
-  replaces a sentinel `Order` with magic field values.
+  replaces a sentinel `Order` with magic field values. **All three queues** - order handoff,
+  audit, strategy - use this same shape, each with its own package-private `Command`, so no
+  fake domain object stands in for a control signal anywhere.
+- **Strategy code never runs on the matcher thread.** `StrategyRunner` is the `MatchListener`;
+  its `onMatch` only `offer`s fills onto its own queue and returns. The strategy itself runs on
+  a separate thread and submits from there. Quoting from `onMatch` would have the matcher adding
+  two quotes for every order it removes, filling the queue it alone drains until `put()` blocks
+  it permanently - a cycle rather than a chain. There is a test that reproduces that shape and
+  times out, to prove the guard works.
+- **Shut down producer, then strategy, then gateway.** The runner produces orders as well as
+  consuming fills, and the producer role decides: stopping it while the gateway still runs lets
+  its backlog drain and its last quotes land, where the reverse order throws
+  `IllegalStateException` once per pending fill.
 - **A cancel for an order that already filled is normal flow.** Counted in `cancelsMissed`
   and logged at `DEBUG`, not `WARN`. A quoting strategy loses that race constantly, and
   warning on it would bury the rejections that mean something.
-- **Consumers stop with a poison pill, producers with an interrupt.** A consumer owes work it
-  has already accepted, so a sentinel queued behind the last real item drains the backlog. A
-  producer owes nothing and nothing feeds it, so no sentinel could reach it - only an
+- **Consumers stop with a queued `Shutdown`, producers with an interrupt.** A consumer owes
+  work it has already accepted, so a sentinel queued behind the last real item drains the
+  backlog. A producer owes nothing and nothing feeds it, so no sentinel could reach it - only an
   interrupt wakes a thread parked in `put()`.
 - **The sentinel is offered with a timeout, never `put()`.** A blocking `put` waits for a
   slot only the stalled consumer could free, and the `join` meant to bound shutdown sits

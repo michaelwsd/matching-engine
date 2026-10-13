@@ -12,13 +12,12 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Matches incoming orders against resting liquidity using price-time priority: better
- * prices fill first, and at equal price the order that arrived first fills first.
+ * Matches incoming orders against resting liquidity using price-time priority: better prices
+ * fill first, and at equal price the order that arrived first fills first.
  *
- * <p>The book is supplied rather than created here, so that the same book can be read by
- * the demo, the snapshot endpoint and any strategy without going through the engine. The
- * engine is expected to be the only writer; from Phase 3 that is enforced by confining it
- * to a single matcher thread.
+ * <p>The book is supplied rather than created here, so the demo, the snapshot endpoint and any
+ * strategy can read it without going through the engine. The engine expects to be its only
+ * writer, enforced by confining both to the gateway's matcher thread.
  *
  * <p>Not thread-safe.
  */
@@ -27,8 +26,8 @@ public final class PriceTimeMatchingEngine implements MatchingEngine {
     private final OrderBook book;
 
     /**
-     * @param book the book to match against and rest unfilled remainders on. This engine
-     *             expects to be its only writer.
+     * @param book the book to match against and rest remainders on; this engine expects to be
+     *             its only writer
      * @throws NullPointerException if {@code book} is null
      */
     public PriceTimeMatchingEngine(OrderBook book) {
@@ -38,23 +37,19 @@ public final class PriceTimeMatchingEngine implements MatchingEngine {
     /**
      * {@inheritDoc}
      *
-     * <p>Policies applied here, each a deliberate choice rather than an accident of the
-     * implementation:
+     * <p>Four deliberate policies:
      *
      * <ul>
-     *   <li><b>Execution price is the resting order's price.</b> The resting order arrived
-     *       first and established the terms, so an aggressor willing to pay more receives
-     *       price improvement.
-     *   <li><b>An unfilled limit remainder rests on the book</b> at its own price.
-     *   <li><b>An unfilled market remainder is cancelled.</b> A market order carries no
-     *       price, so there is no price at which it could rest; inventing one would impose
-     *       terms the client never asked for. This is immediate-or-cancel behaviour, and it
-     *       is what most exchanges do.
-     *   <li><b>Self-trade prevention cancels the newest.</b> On reaching a resting order
-     *       from the same account, the incoming order is rejected outright - it neither
-     *       matches further nor rests, and the resting order keeps its queue position. Any
-     *       trades already executed against other accounts stand, because an execution
-     *       cannot be unwound.
+     *   <li><b>Execution price is the resting order's.</b> It arrived first and set the terms,
+     *       so an aggressor willing to pay more receives price improvement.
+     *   <li><b>An unfilled limit remainder rests</b> at its own price.
+     *   <li><b>An unfilled market remainder is cancelled.</b> A market order carries no price,
+     *       so there is none at which it could rest; inventing one would impose terms the
+     *       client never asked for. Immediate-or-cancel, as most exchanges do.
+     *   <li><b>Self-trade prevention cancels the newest.</b> On reaching a resting order from
+     *       the same account the incoming order is rejected outright - it neither matches
+     *       further nor rests - and the resting order keeps its queue position. Trades already
+     *       done against other accounts stand, because an execution cannot be unwound.
      * </ul>
      */
     @Override
@@ -99,8 +94,8 @@ public final class PriceTimeMatchingEngine implements MatchingEngine {
     /**
      * {@inheritDoc}
      *
-     * <p>Delegates straight to the book: cancelling needs no matching, only removal from a
-     * price level and from the id index, which {@link OrderBook#cancelOrder} keeps in step.
+     * <p>Straight to the book: cancelling needs no matching, only the removal that
+     * {@link OrderBook#cancelOrder} keeps consistent across both structures.
      */
     @Override
     public void cancel(long orderId) {
@@ -108,11 +103,9 @@ public final class PriceTimeMatchingEngine implements MatchingEngine {
     }
 
     /**
-     * Whether these two orders can trade - the incoming order's price is at least as good as
-     * the resting order's, from the incoming order's point of view.
-     *
-     * <p>A market order always crosses: it accepts any price, which is exactly what makes it a
-     * market order.
+     * Whether these two can trade - the incoming price is at least as good as the resting one,
+     * from the incoming order's point of view. A market order always crosses: accepting any
+     * price is what makes it a market order.
      */
     private boolean ordersCrossed(Order incoming, Order resting) {
         if (incoming.getOrderType() == OrderType.MARKET) {

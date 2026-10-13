@@ -24,20 +24,13 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * Runs a synthetic market for a fixed duration, redrawing the order book as it goes.
  *
- * <p>Wires the pipeline together: a random walk supplies a mid price, a generator turns each
- * mid into an order, a driver pushes those into the gateway from its own thread, and the
- * gateway's single matcher thread feeds them to the engine. Each matched order then fans out
- * to a {@link TradeLogger}, which appends it to a CSV audit trail from its own thread, and to
- * the published snapshot that this class renders and {@link BookFeedServer} serves as JSON.
+ * <p>Wires the pipeline by hand; {@code README.md} draws the shape. The one thing not visible
+ * in the code below: the book is never read from here, because it is confined to the matcher
+ * thread. A {@link MatchListener}, invoked <em>on that thread</em>, builds an immutable
+ * {@link BookSnapshot} and publishes it through an {@link AtomicReference} that this class only
+ * reads - so no lock, and no half-updated book can be rendered.
  *
- * <p>The book is never read from here. It is confined to the matcher thread, so instead a
- * {@link MatchListener} - which the gateway invokes <em>on that thread</em> - builds an
- * immutable {@link BookSnapshot} and publishes it through an {@link AtomicReference}. This
- * class only ever reads that reference, so no lock is needed and no half-updated book can be
- * rendered. The snapshot is built on the matcher thread because only that thread may touch the
- * book, and rendered here because terminal I/O is slow.
- *
- * <p>Output goes to {@code System.out} deliberately: this is the demo's user interface, not
+ * <p>Output goes to {@code System.out} deliberately - this is the demo's user interface, not
  * diagnostics. Components log through SLF4J.
  */
 public class Main {
@@ -76,12 +69,10 @@ public class Main {
     private static final String SHOW_CURSOR = "\u001B[?25h";
 
     /**
-     * Whether output is a real terminal, which decides how this renders. Redrawing in place
-     * needs ANSI cursor codes; piped output, CI logs and IntelliJ's plain run console ignore
-     * them, so there we print an occasional snapshot and emit no escapes at all.
-     *
-     * <p>Detection is never perfectly reliable, so {@code -Dsimulation.ansi=true|false}
-     * overrides it, the same escape hatch as {@code --color=always}.
+     * Whether output is a real terminal. Redrawing in place needs ANSI cursor codes; piped
+     * output, CI logs and IntelliJ's plain console ignore them, so there we print an occasional
+     * snapshot and emit no escapes. Detection is never perfectly reliable, so
+     * {@code -Dsimulation.ansi=true|false} overrides it - the same hatch as {@code --color}.
      */
     private static final boolean INTERACTIVE = detectInteractive();
 
@@ -219,24 +210,21 @@ public class Main {
     /** Width of every section rule, so the config block and the book line up. */
     private static final int PAGE_WIDTH = BID_WIDTH + ASK_WIDTH + 3;
 
-    /**
-     * Column layouts for the two halves of the table. Header and data rows share these format
-     * strings so the columns cannot drift apart.
-     */
+    /** Shared by header and data rows, so the two halves of the table cannot drift apart. */
     private static final String BID_CELL = "%8s   %11s";
     private static final String ASK_CELL = "%9s %8s";
 
     /**
      * Prints one frame, optionally redrawing over the frame above it.
      *
-     * <p>In-place redraw works by moving the cursor back up exactly as many lines as the frame
-     * is tall. Every frame has the same height - empty depth rows are padded, not omitted - so
-     * the cursor lands where the previous frame began. Each line ends with an erase-to-end, so
-     * a shorter line cannot leave debris behind.
+     * <p>Redraw moves the cursor up exactly as many lines as the frame is tall. Every frame is
+     * the same height - empty depth rows are padded, not omitted - so the cursor lands where
+     * the previous frame began, and each line ends with an erase-to-end so a shorter line
+     * leaves no debris.
      *
      * <p>{@code redrawInPlace} must be false whenever anything else has printed since the last
-     * frame, because the cursor would otherwise count back over that output and overwrite it.
-     * Off a terminal it is ignored and no escapes are emitted at all.
+     * frame, or the cursor counts back over that output and overwrites it. Ignored off a
+     * terminal, where no escapes are emitted at all.
      */
     private static void draw(List<String> lines, boolean redrawInPlace) {
         StringBuilder out = new StringBuilder();
@@ -338,18 +326,16 @@ public class Main {
     }
 
     /**
-     * Formats a price given in ticks as dollars and cents, where one tick is one cent.
-     * Uses integer division rather than floating point, for the same reason prices are
-     * stored as scaled longs in the first place.
+     * Formats a tick price as dollars and cents. Integer division rather than floating point,
+     * for the same reason prices are scaled longs in the first place.
      */
     private static String formatPrice(long ticks) {
         return String.format("%d.%02d", ticks / 100, ticks % 100);
     }
 
     /**
-     * Formats the midpoint of the spread. The mid of two adjacent ticks falls on a half
-     * tick, so this is computed in half-ticks and rendered with a trailing digit rather
-     * than by dividing into a double.
+     * Formats the midpoint of the spread. The mid of two adjacent ticks falls on a half tick, so
+     * this works in half-ticks and renders a trailing digit rather than dividing into a double.
      */
     private static String formatMid(long bid, long ask) {
         long total = bid + ask;

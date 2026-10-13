@@ -22,22 +22,20 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Appends every executed trade to a CSV file, as an audit trail.
  *
- * <p>A {@link MatchListener} runs on the matcher thread, so anything it does the exchange waits
- * for. Matching takes microseconds; a file write takes tens to thousands of times longer. So
- * {@link #onMatch} only queues trades and returns, and a dedicated writer thread does the I/O -
- * the same producer-consumer shape as {@link com.mwang.gateway.OrderGateway}, one layer out.
+ * <p>A {@link MatchListener} runs on the matcher thread, so the exchange waits for whatever it
+ * does - and a file write takes orders of magnitude longer than a match. So {@link #onMatch}
+ * only queues and returns, and a writer thread does the I/O: the same producer-consumer shape
+ * as {@link com.mwang.gateway.OrderGateway}, one layer out.
  *
- * <p><strong>Flush policy:</strong> the writer flushes whenever the queue empties. Under a
- * burst, writes batch in the buffer; the moment the burst ends everything is pushed out. Worst
- * case on a JVM crash is however far behind the writer had fallen, and nothing in a quiet
- * market. Note {@code flush()} reaches the operating system, not the disk - surviving a process
- * crash but not a power cut, which would need {@code FileChannel.force()}.
+ * <p><strong>Flush policy:</strong> the writer flushes whenever the queue empties, so writes
+ * batch under a burst and are pushed out the moment it ends. {@code flush()} reaches the
+ * operating system, not the disk, so this survives a process crash but not a power cut -
+ * {@code FileChannel.force()} would be the next step.
  *
- * <p><strong>Back-pressure:</strong> {@link #onMatch} uses {@code offer}, never {@code put},
- * because a full queue must not stall the matcher. Drops are therefore possible; they are
- * counted, logged and reported at close, never silent. This is the opposite trade-off from the
- * gateway, where blocking the producer is correct - there the producer is a client who can
- * wait, here it is the matching engine, which cannot.
+ * <p><strong>Back-pressure:</strong> {@code offer}, never {@code put}, because a full queue
+ * must not stall the matcher. Drops are possible, and are counted, logged and reported at
+ * close. The opposite trade-off from the gateway, because the caller differs: there a client
+ * who can wait, here the matching engine, which cannot.
  *
  * <p>Close this <strong>after</strong> the gateway has shut down, or the matcher's final trades
  * have nowhere to go.
@@ -53,12 +51,11 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
 
     private static final String HEADER = "timestamp,buyOrderId,sellOrderId,price,quantity";
 
-    /** End-of-stream marker, compared by identity. Its values are arbitrary but must satisfy
-     * {@link Trade}'s validation, hence 1 rather than 0. */
-    private static final Trade POISON = new Trade(-1, -1, 1, 1, 0);
+    /** One instance suffices: it carries no state and is matched by type, not identity. */
+    private static final Command SHUTDOWN = new Command.Shutdown();
 
     private final Path file;
-    private final BlockingQueue<Trade> pending = new LinkedBlockingQueue<>(CAPACITY);
+    private final BlockingQueue<Command> pending = new LinkedBlockingQueue<>(CAPACITY);
     private final AtomicLong written = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
 
@@ -68,8 +65,8 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
 
     /**
      * @param file where to append trades. Parent directories are created on {@link #start()};
-     *             an existing file is appended to and the header written only when new, so
-     *             restarting does not corrupt an earlier run's records.
+     *             an existing file is appended to and the header written only when new, so a
+     *             restart cannot corrupt an earlier run's records.
      */
     public TradeLogger(Path file) {
         this.file = Objects.requireNonNull(file, "file");
@@ -108,7 +105,7 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
     @Override
     public void onMatch(Order order, List<Trade> trades) {
         for (Trade trade : trades) {
-            if (!pending.offer(trade)) {
+            if (!pending.offer(new Command.Append(trade))) {
                 // offer() rather than put(): blocking here would stall the whole exchange.
                 if (dropped.incrementAndGet() == 1) {
                     logger.error("Trade log queue is full ({}); audit records are being dropped",
@@ -119,21 +116,25 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
     }
 
     /**
-     * Drains the queue onto disk until the poison pill arrives. A sentinel rather than a flag,
-     * because this is a consumer with a backlog it has already promised to write.
+     * Drains the queue onto disk until the shutdown command arrives. A queued sentinel rather
+     * than a flag, because this is a consumer with a backlog it has already promised to write.
      */
     private void writeLoop() {
         try {
+            writing:
             while (true) {
-                Trade trade = pending.take();
-                if (trade == POISON) {
-                    break;
-                }
-                write(trade);
-                if (pending.isEmpty()) {
-                    // Caught up: make everything written so far durable. Under load this is
-                    // skipped and the writes batch in the buffer instead.
-                    flush();
+                switch (pending.take()) {
+                    case Command.Append(Trade trade) -> {
+                        write(trade);
+                        if (pending.isEmpty()) {
+                            // Caught up: make everything written so far durable. Under load
+                            // this is skipped and the writes batch in the buffer instead.
+                            flush();
+                        }
+                    }
+                    case Command.Shutdown ignored -> {
+                        break writing;
+                    }
                 }
             }
         } catch (InterruptedException e) {
@@ -174,11 +175,9 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
         running = false;
 
         try {
-            // offer with a timeout, not put: if the queue were full, a blocking put would wait
-            // for a writer that is itself waiting for space - and the join below would never
-            // be reached, so its timeout would buy nothing.
-            if (!pending.offer(POISON, SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-                logger.error("Could not queue the poison pill; interrupting the writer");
+            // offer with a timeout, never put - see OrderGateway.shutdown().
+            if (!pending.offer(SHUTDOWN, SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                logger.error("Could not queue the shutdown command; interrupting the writer");
                 writer.interrupt();
             }
             writer.join(SHUTDOWN_TIMEOUT_MILLIS);

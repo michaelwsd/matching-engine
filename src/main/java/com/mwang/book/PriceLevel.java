@@ -9,12 +9,11 @@ import java.util.Deque;
  * Every order resting at one price, held in arrival order.
  *
  * <p>The queue is what gives the book its <em>time</em> priority: {@link #add} appends to the
- * back and {@link #poll} takes from the front, so at equal price the order that arrived first
- * is the order that fills first.
+ * back, {@link #poll} takes from the front, so at equal price the first to arrive is the first
+ * to fill.
  *
- * <p>Package-private deliberately. {@link OrderBook} also indexes orders by id, and the two
- * structures must agree; handing a level to an outside caller would let it remove an order
- * from one and not the other.
+ * <p>Package-private deliberately: {@link OrderBook} also indexes orders by id, and an outside
+ * caller holding a level could remove from one structure and not the other.
  *
  * <p>Not thread-safe.
  */

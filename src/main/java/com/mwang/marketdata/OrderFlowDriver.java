@@ -12,19 +12,16 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Generates synthetic orders on its own thread and submits them to an {@link OrderGateway}.
  *
- * <p>The producer end of the pipeline; the gateway's matcher thread is the consumer, and the
- * gateway's queue is the only thread boundary. This class holds no queue of its own.
+ * <p>The producer end of the pipeline. It holds no queue of its own - the gateway's is the only
+ * thread boundary. Pacing is a uniform delay below {@code MAX_DELAY_MILLIS}, giving roughly 50
+ * orders a second; a ceiling, not a guarantee, since a lagging matcher blocks {@code submit}
+ * and paces the producer instead.
  *
- * <p>Orders are paced by a uniformly random delay below {@code MAX_DELAY_MILLIS}, giving
- * roughly 50 per second. That is a ceiling, not a guarantee: if the matcher falls behind, the
- * gateway's {@code submit} blocks and the producer is paced by the matcher instead.
+ * <p>{@link #start()} and {@link #stop()} may be called from different threads, so a shutdown
+ * hook can stop this mid-startup. The generator may not - confine one per driver.
  *
- * <p>{@link #start()} and {@link #stop()} may be called from different threads, so a JVM
- * shutdown hook can stop this while the main thread is still starting up. The generator,
- * however, is confined to the producer thread - never share one between two drivers.
- *
- * <p><strong>Call {@code stop()} before {@link OrderGateway#shutdown()}.</strong> The reverse
- * order leaves the producer submitting to a stopped gateway, which rejects it.
+ * <p><strong>Call {@code stop()} before {@link OrderGateway#shutdown()}</strong>, or the
+ * producer submits into a stopped gateway and is rejected.
  */
 public final class OrderFlowDriver {
 
@@ -42,16 +39,13 @@ public final class OrderFlowDriver {
 
     private Thread producer;
 
-    /**
-     * How many orders this driver has handed to the gateway. Written by the producer thread,
-     * read by {@link #stop()} and by {@link #submitted()}, so not a plain {@code long}.
-     */
+    /** Written by the producer, read by {@link #submitted()} at any time - so not a plain long. */
     private final AtomicLong submitted = new AtomicLong();
 
     /**
-     * Whether to keep generating. Written by {@link #stop()}, read by the producer thread, so
-     * {@code volatile} rather than monitor-guarded - if the producer needed this object's
-     * monitor, {@code stop()} holding it across {@link Thread#join(long)} would deadlock.
+     * Whether to keep generating. {@code volatile} rather than monitor-guarded: if the producer
+     * needed this object's monitor, {@code stop()} holding it across {@link Thread#join(long)}
+     * would deadlock.
      */
     private volatile boolean running;
 
@@ -87,10 +81,9 @@ public final class OrderFlowDriver {
     /**
      * Generates orders until asked to stop.
      *
-     * <p>{@code while (running)} is right here where the same construct was a bug in the
-     * gateway's matcher: a consumer has a backlog to drain first, a producer does not. In
-     * practice the flag is belt-and-braces, since {@link #stop()} always interrupts and both
-     * blocking calls below throw on interruption.
+     * <p>{@code while (running)} is right here where it was a bug in the matcher: a consumer has
+     * a backlog to drain, a producer does not. Belt-and-braces in practice, since {@link #stop()}
+     * always interrupts and both blocking calls throw on interruption.
      */
     private void producerLoop() {
         try {
@@ -111,13 +104,12 @@ public final class OrderFlowDriver {
      * Stops the producer and waits for its thread. Returns immediately if never started, or
      * already stopped.
      *
-     * <p>The flag alone is not enough: the producer may be parked inside {@code put()} waiting
-     * for a queue slot that will never free, where it is not running this loop and will never
-     * see the flag change. Interruption is the only way to wake it, and unlike the gateway's
-     * matcher there is no poison-pill option - nothing feeds a producer.
+     * <p>The flag alone is not enough: parked inside {@code put()}, the producer is not running
+     * the loop and will never read it. Only an interrupt wakes it, and unlike the matcher there
+     * is no queued-sentinel option - nothing feeds a producer.
      *
-     * <p>The order being submitted when the interrupt lands is discarded, which is acceptable
-     * for synthetic flow. A real gateway would use {@code offer()} and reject explicitly.
+     * <p>The order in flight when the interrupt lands is discarded, acceptable for synthetic
+     * flow. A real gateway would {@code offer()} and reject explicitly.
      */
     public synchronized void stop() {
         if (!running) {

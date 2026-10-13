@@ -6,8 +6,8 @@ import java.util.List;
  * An immutable view of the top of the book, safe to hand to another thread.
  *
  * <p>Exists so the book itself never crosses a thread boundary. {@link OrderBook} is confined
- * to the matcher thread; the matcher builds one of these between two orders, when the book is
- * quiet, and publishes it. Readers then hold a value that cannot change under them.
+ * to the matcher thread, which builds one of these between two orders and publishes it; readers
+ * then hold a value that cannot change under them.
  *
  * @param bids    aggregated depth, best price first
  * @param asks    aggregated depth, best price first

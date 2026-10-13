@@ -6,9 +6,9 @@ package com.mwang.model;
  *
  * @param buyOrderId  the order on the buy side
  * @param sellOrderId the order on the sell side
- * @param price       execution price in ticks, one tick being one cent. This is the
- *                    <em>resting</em> order's price: it was there first and set the terms, so
- *                    an aggressor willing to pay more receives price improvement.
+ * @param price       execution price in ticks of one cent. The <em>resting</em> order's price:
+ *                    it was there first and set the terms, so an aggressor willing to pay more
+ *                    receives price improvement.
  * @param quantity    the quantity exchanged, always positive
  * @param timestamp   execution time in milliseconds since the Unix epoch
  */

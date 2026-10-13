@@ -16,6 +16,9 @@
                                                                    command", plus a stack trace
                                                                    from the wedged engine
     BookFeedServerTest (the failing-supplier test)          ERROR "Failed to serve /book"
+    StrategyRunnerTest.shouldSurviveAStrategyThatThrows     ERROR "Strategy failed on trade",
+                                                                  plus a stack trace
+    StrategyRunnerTest.shouldNeverBlockInOnMatch...         ERROR "Strategy queue is full"
   A green build with WARN or ERROR lines in its output is still a green build - read the
   "Tests run" summary at the end, not the colour of the text above it.
 -->

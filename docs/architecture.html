@@ -346,7 +346,7 @@ footer a{color:var(--accent)}
       <td><code>trade-writer</code></td>
       <td><code>TradeLogger.start()</code></td>
       <td>the <code>BufferedWriter</code> on <code>trades.csv</code></td>
-      <td>a poison-pill trade, for the same reason: it owes the backlog it accepted</td>
+      <td>a queued <code>Shutdown</code> command, for the same reason: it owes the backlog it accepted</td>
     </tr>
     <tr>
       <td>one virtual thread <em>per HTTP request</em></td>
@@ -361,7 +361,7 @@ footer a{color:var(--accent)}
 <p class="muted">The shutdown mechanisms differ because the threads differ. A
 <strong>consumer</strong> has already accepted work it owes, so it must be stopped <em>in
 order</em>, by a sentinel that arrives behind the last real item - which is why both the matcher
-and the writer take a poison pill. A <strong>producer</strong> owes nothing yet and may be
+and the writer take a queued <code>Shutdown</code> command. A <strong>producer</strong> owes nothing yet and may be
 stopped immediately - and must be, since nothing feeds it, so no sentinel could ever reach it.
 Hence the producer is interrupted and the consumers are not.</p>
 

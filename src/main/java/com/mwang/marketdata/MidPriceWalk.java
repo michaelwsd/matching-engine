@@ -5,14 +5,12 @@ import java.util.Random;
 /**
  * A bounded random walk over a mid price, in ticks.
  *
- * <p>Each call to {@link #next()} moves the mid by a uniformly random step and then clamps
- * the result into {@code [referenceMid - maxDeviation, referenceMid + maxDeviation]}. The
- * clamp is what stops the walk drifting away over a long run: an unbounded random walk has
- * no tendency to return anywhere, so a simulation left running would eventually produce a
- * mid no order could be built from.
+ * <p>{@link #next()} moves the mid by a uniformly random step, then clamps it into
+ * {@code [referenceMid - maxDeviation, referenceMid + maxDeviation]}. The clamp is what stops
+ * it drifting: an unbounded walk has no tendency to return anywhere, so a long run would
+ * eventually reach a mid no order could be built from.
  *
- * <p>Instances are not thread-safe. {@link #next()} mutates {@code mid}, so confine one
- * walk to one thread.
+ * <p>Not thread-safe - {@link #next()} mutates {@code mid}. Confine one walk to one thread.
  */
 public final class MidPriceWalk {
 
@@ -28,9 +26,9 @@ public final class MidPriceWalk {
     /**
      * @param referenceMid the level the walk is bounded around, in ticks; must be positive
      * @param stepSize     the largest single move in either direction, in ticks; must be positive
-     * @param maxDeviation how far the mid may stray from the reference in either direction.
-     *                     Must be positive and strictly less than {@code referenceMid}, so that
-     *                     the lower bound stays above zero and every mid can price a limit order.
+     * @param maxDeviation how far the mid may stray either way. Positive and strictly less than
+     *                     {@code referenceMid}, so the lower bound stays above zero and every
+     *                     mid can price a limit order.
      * @param seed         seed for the underlying generator, so that a run can be reproduced
      * @throws IllegalArgumentException if any bound is non-positive, or the deviation would
      *                                  allow the mid to reach zero

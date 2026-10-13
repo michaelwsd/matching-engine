@@ -138,13 +138,13 @@ public final class OrderGateway {
      */
     private void matchLoop() {
         try {
-            matching:
+            matching: // name tag for the while loop
             while (true) {
                 switch (inbound.take()) { // parks here when there is nothing to do
                     case Command.Submit(Order order) -> applySubmit(order);
                     case Command.Cancel(long orderId) -> applyCancel(orderId);
                     case Command.Shutdown ignored -> {
-                        break matching;
+                        break matching; // break out of the entire while look
                     }
                 }
             }
@@ -187,17 +187,11 @@ public final class OrderGateway {
     }
 
     /**
-     * Logs each trade at {@code DEBUG}, not {@code INFO}.
-     *
-     * <p>Two reasons. The demo executes around 34 trades a second against a view that redraws
-     * 5 times a second, so per-trade {@code INFO} lines would scroll away the thing they are
-     * meant to annotate. And Logback's appenders are synchronous, so a line here puts console
-     * and file I/O on the matcher's hot path - the very cost {@link com.mwang.audit.TradeLogger}
-     * exists to move off this thread. The permanent record of a trade is that CSV audit trail;
-     * this is for diagnosing one specific run, enabled with {@code -DLOG_LEVEL=DEBUG}.
+     * Logs each trade at {@code DEBUG}, enabled with {@code -DLOG_LEVEL=DEBUG}. See
+     * {@code logback.xml} for why this is not {@code INFO}.
      *
      * <p>The level check guards the loop, not the formatting: SLF4J already defers formatting
-     * for a disabled call, but it cannot skip iterating the list.
+     * for a disabled call, but cannot skip iterating the list.
      */
     private void logTrades(List<Trade> trades) {
         if (!logger.isDebugEnabled()) {
@@ -226,10 +220,10 @@ public final class OrderGateway {
      * Drains what is already queued, stops the matcher and waits for its thread. Idempotent,
      * and safe when never started.
      *
-     * <p>Queues the shutdown command with {@code offer} and a timeout, never {@code put}: on a
-     * full queue with a wedged matcher, a blocking {@code put} would wait forever and the
-     * {@code join} meant to bound this wait would never be reached. Interrupting is the
-     * fallback, last because it abandons the backlog.
+     * <p><strong>Queues the sentinel with {@code offer} and a timeout, never {@code put}:</strong>
+     * on a full queue with a wedged matcher a blocking {@code put} waits forever, and the
+     * {@code join} meant to bound this would never be reached. Interrupting is the fallback,
+     * last because it abandons the backlog. The audit and strategy queues do the same.
      */
     public synchronized void shutdown() {
         if (!running) {

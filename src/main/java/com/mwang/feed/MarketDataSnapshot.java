@@ -33,11 +33,9 @@ public record MarketDataSnapshot(long sequence,
                                  List<DepthLevel> asks) {
 
     /**
-     * Copies the lists defensively: a record's constructor copies references, not contents, so
-     * a record holding a mutable list is not itself immutable.
-     *
-     * <p>Does not check that the best bid is below the best ask - that invariant belongs to the
-     * order book, not to a message about it.
+     * Copies the lists defensively: a record copies references, not contents, so one holding a
+     * mutable list is not itself immutable. Deliberately does not check that the bid is below
+     * the ask - that invariant belongs to the book, not to a message about it.
      */
     public MarketDataSnapshot {
         Objects.requireNonNull(bids, "bids");

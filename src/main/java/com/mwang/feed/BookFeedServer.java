@@ -19,10 +19,9 @@ import java.util.function.Supplier;
 /**
  * Serves the current order book as JSON over HTTP, on {@code /book}.
  *
- * <p>Takes a supplier rather than the book, so it has no idea where the data comes from and
- * cannot reach matcher-owned state. The supplier is expected to return an immutable snapshot
- * that has already been published; handler threads then need no locks, which is why an
- * arbitrary number of concurrent requests is safe.
+ * <p>Takes a supplier rather than the book, so it cannot reach matcher-owned state. The
+ * supplier returns an already-published immutable snapshot, so handler threads need no locks
+ * and any number of concurrent requests is safe.
  *
  * <p>Start this last and {@link #close()} it first, so the exchange stops taking outside
  * traffic before its internals shut down.
@@ -92,10 +91,8 @@ public final class BookFeedServer implements AutoCloseable {
     }
 
     /**
-     * Stops serving and releases the port. Idempotent, and safe when never started.
-     *
-     * <p>Shuts the executor down explicitly: {@code HttpServer.stop} does not, so leaving it
-     * out leaks its threads.
+     * Stops serving and releases the port. Idempotent, and safe when never started. Shuts the
+     * executor down explicitly, because {@code HttpServer.stop} does not and its threads leak.
      */
     @Override
     public void close() {
