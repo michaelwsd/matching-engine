@@ -1,5 +1,6 @@
 package com.mwang.engine;
 
+import com.mwang.exception.UnknownOrderException;
 import com.mwang.model.Order;
 import com.mwang.model.Trade;
 
@@ -27,4 +28,21 @@ public interface MatchingEngine {
      * @return the trades produced, possibly empty, never null
      */
     List<Trade> submit(Order incoming);
+
+    /**
+     * Removes a resting order from the book. Must run on the thread that owns the book, so
+     * reach it by queueing a cancel on the gateway rather than calling this directly.
+     *
+     * <p>A default rather than abstract, to keep this a {@link FunctionalInterface}. The
+     * default throws, which is the truthful answer for a lambda: {@code order -> List.of()}
+     * holds no book and has nothing to cancel. An engine that owns one overrides this.
+     *
+     * @throws UnknownOrderException         if no such order is resting. Routine rather than
+     *                                       exceptional when a quote filled a moment earlier.
+     * @throws UnsupportedOperationException if this engine has no book
+     */
+    default void cancel(long orderId) {
+        throw new UnsupportedOperationException(
+                "this matching engine does not support cancel: " + getClass().getName());
+    }
 }

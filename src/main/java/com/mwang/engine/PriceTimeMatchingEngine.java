@@ -97,6 +97,17 @@ public final class PriceTimeMatchingEngine implements MatchingEngine {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>Delegates straight to the book: cancelling needs no matching, only removal from a
+     * price level and from the id index, which {@link OrderBook#cancelOrder} keeps in step.
+     */
+    @Override
+    public void cancel(long orderId) {
+        book.cancelOrder(orderId);
+    }
+
+    /**
      * Whether these two orders can trade - the incoming order's price is at least as good as
      * the resting order's, from the incoming order's point of view.
      *

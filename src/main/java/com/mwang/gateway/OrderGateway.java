@@ -2,9 +2,8 @@ package com.mwang.gateway;
 
 import com.mwang.engine.MatchingEngine;
 import com.mwang.exception.OrderException;
+import com.mwang.exception.UnknownOrderException;
 import com.mwang.model.Order;
-import com.mwang.model.OrderType;
-import com.mwang.model.Side;
 import com.mwang.model.Trade;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,15 +18,15 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * The boundary between many order sources and one matching engine.
  *
- * <p>Callers {@link #submit} from any thread; a single matcher thread drains the queue and
- * feeds the engine one order at a time. That is the whole design: the engine and book need no
- * locks because only one thread ever touches them, deadlock is structurally impossible, and
- * price-time priority stays meaningful because arrival order is decided once, by the queue.
- * Without this, two concurrent orders could match against the same resting order at once.
+ * <p>Callers {@link #submit} and {@link #cancel} from any thread; one matcher thread drains
+ * the queue and applies a {@link Command} at a time. That is the whole design: the engine and
+ * book need no locks because only one thread touches them, deadlock is structurally
+ * impossible, and price-time priority stays meaningful because arrival order is decided once,
+ * by the queue. Both operations travel that queue, so a caller never touches a resting
+ * {@link Order} - it asks the matcher to.
  *
- * <p>The queue is bounded. A full queue blocks the submitting thread, which is the correct
- * back-pressure here - a client can wait, and silently dropping an accepted order cannot be
- * walked back.
+ * <p>The queue is bounded, so a full queue blocks the submitter. That is the right
+ * back-pressure here: a client can wait, and dropping an accepted order cannot be walked back.
  *
  * <p>Start this <strong>before</strong> anything submits to it, and {@link #shutdown()} it
  * before closing whatever its listener writes to.
@@ -42,15 +41,10 @@ public final class OrderGateway {
     /** How long {@link #shutdown()} waits at each step before giving up and saying so. */
     private static final long SHUTDOWN_TIMEOUT_MILLIS = 5_000;
 
-    /**
-     * End-of-stream marker, compared by identity. Queued rather than signalled with a flag, so
-     * it takes its place behind every order already accepted and nothing acknowledged is lost.
-     */
-    private static final Order POISON = new Order(
-            0, -1, 0, 1, Side.BUY, OrderType.MARKET, 0
-    );
+    /** One instance suffices: it carries no state and is matched by type, not identity. */
+    private static final Command SHUTDOWN = new Command.Shutdown();
 
-    private final BlockingQueue<Order> inbound = new LinkedBlockingQueue<>(CAPACITY);
+    private final BlockingQueue<Command> inbound = new LinkedBlockingQueue<>(CAPACITY);
     private final MatchingEngine engine;
     private final MatchListener listener;
 
@@ -61,8 +55,10 @@ public final class OrderGateway {
     private final AtomicLong ordersProcessed = new AtomicLong();
     private final AtomicLong tradesExecuted = new AtomicLong();
     private final AtomicLong ordersRejected = new AtomicLong();
+    private final AtomicLong ordersCancelled = new AtomicLong();
+    private final AtomicLong cancelsMissed = new AtomicLong();
 
-    private Thread matcher; // the single thread that submits orders to the engine
+    private Thread matcher; // the single thread that applies commands to the engine
     private volatile boolean running;
 
     /** Creates a gateway that notifies nothing. */
@@ -82,19 +78,38 @@ public final class OrderGateway {
     }
 
     /**
-     * Hands an order to the matcher. Safe to call from any thread.
-     *
-     * <p>Blocks while the queue is full, which paces the caller to whatever the matcher can
-     * actually absorb.
+     * Hands an order to the matcher. Safe to call from any thread. Blocks while the queue is
+     * full, pacing the caller to whatever the matcher can absorb.
      *
      * @throws InterruptedException  if interrupted while waiting for queue space
      * @throws IllegalStateException if the gateway is not running
+     * @throws NullPointerException  if {@code order} is null
      */
     public void submit(Order order) throws InterruptedException {
         if (!running) {
             throw new IllegalStateException("gateway is not running");
         }
-        inbound.put(order);
+        inbound.put(new Command.Submit(order));
+    }
+
+    /**
+     * Asks the matcher to take a resting order off the book. Safe to call from any thread.
+     *
+     * <p>Returns nothing on purpose: a boolean could only come from blocking until the matcher
+     * had processed the cancel, turning every requote into a round trip. The outcome is in
+     * {@link #ordersCancelled()} and {@link #cancelsMissed()} instead. Cancelling an order that
+     * already filled is <em>normal</em> - a client pulls a quote as someone takes it, and one
+     * of them loses the race - so it counts as missed rather than rejected.
+     *
+     * @param orderId the order to remove
+     * @throws InterruptedException  if interrupted while waiting for queue space
+     * @throws IllegalStateException if the gateway is not running
+     */
+    public void cancel(long orderId) throws InterruptedException {
+        if (!running) {
+            throw new IllegalStateException("gateway is not running");
+        }
+        inbound.put(new Command.Cancel(orderId));
     }
 
     /**
@@ -114,36 +129,60 @@ public final class OrderGateway {
     }
 
     /**
-     * Drains the queue into the engine until the poison pill arrives.
+     * Drains the queue into the engine until the shutdown command arrives.
      *
-     * <p>{@code while (true)} rather than {@code while (running)}: this is a consumer with a
-     * backlog it has already accepted, and exiting on a flag would abandon it.
+     * <p>{@code while (true)} rather than {@code while (running)}: this consumer has a backlog
+     * it already accepted, and exiting on a flag would abandon it. The {@code switch} is
+     * exhaustive because {@link Command} is sealed, so a command added later will not compile
+     * until it is handled here.
      */
     private void matchLoop() {
         try {
+            matching:
             while (true) {
-                // take the submitted order from the queue
-                Order order = inbound.take(); // parks here when there is nothing to do
-                if (order == POISON) {
-                    break;
+                switch (inbound.take()) { // parks here when there is nothing to do
+                    case Command.Submit(Order order) -> applySubmit(order);
+                    case Command.Cancel(long orderId) -> applyCancel(orderId);
+                    case Command.Shutdown ignored -> {
+                        break matching;
+                    }
                 }
-                List<Trade> trades = List.of();
-                try {
-                    // submit the order to the engine to get matching trades
-                    trades = engine.submit(order);
-                } catch (OrderException e) {
-                    // A bad order must not kill the matcher. Anything that is not an
-                    // OrderException is a genuine fault and is allowed to propagate.
-                    ordersRejected.incrementAndGet();
-                    logger.warn("Rejected order {}: {}", order.getOrderId(), e.getMessage());
-                }
-                ordersProcessed.incrementAndGet();
-                tradesExecuted.addAndGet(trades.size());
-                logTrades(trades);
-                notifyListener(order, trades);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Matches one order and tells the listener, whatever the outcome. */
+    private void applySubmit(Order order) {
+        List<Trade> trades = List.of();
+        try {
+            // submit the order to the engine to get matching trades
+            trades = engine.submit(order);
+        } catch (OrderException e) {
+            // A bad order must not kill the matcher. Anything that is not an
+            // OrderException is a genuine fault and is allowed to propagate.
+            ordersRejected.incrementAndGet();
+            logger.warn("Rejected order {}: {}", order.getOrderId(), e.getMessage());
+        }
+        ordersProcessed.incrementAndGet();
+        tradesExecuted.addAndGet(trades.size());
+        logTrades(trades);
+        notifyListener(order, trades);
+    }
+
+    /**
+     * Removes one resting order. {@link UnknownOrderException} is caught apart from the other
+     * {@link OrderException}s and logged at {@code DEBUG}, not {@code WARN}: a quoting strategy
+     * loses that race constantly, and warning on it would bury the rejections that matter.
+     */
+    private void applyCancel(long orderId) {
+        try {
+            engine.cancel(orderId);
+            ordersCancelled.incrementAndGet();
+        } catch (UnknownOrderException e) {
+            cancelsMissed.incrementAndGet();
+            logger.debug("Cancel for order {} arrived after it left the book", orderId);
         }
     }
 
@@ -187,11 +226,10 @@ public final class OrderGateway {
      * Drains what is already queued, stops the matcher and waits for its thread. Idempotent,
      * and safe when never started.
      *
-     * <p>Queues the pill with {@code offer} and a timeout rather than {@code put}: a full queue
-     * plus a wedged matcher would make a blocking {@code put} wait forever, and the
-     * {@code join} below - the thing meant to bound this wait - would never be reached.
-     * Interruption is the fallback, and it abandons the backlog, which is why it is last resort
-     * rather than the first move.
+     * <p>Queues the shutdown command with {@code offer} and a timeout, never {@code put}: on a
+     * full queue with a wedged matcher, a blocking {@code put} would wait forever and the
+     * {@code join} meant to bound this wait would never be reached. Interrupting is the
+     * fallback, last because it abandons the backlog.
      */
     public synchronized void shutdown() {
         if (!running) {
@@ -200,10 +238,10 @@ public final class OrderGateway {
         running = false;
 
         try {
-            // interrupt if poison pill can't be added
-            if (!inbound.offer(POISON, SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
-                logger.error("Could not queue the poison pill within {}ms; interrupting the matcher",
-                        SHUTDOWN_TIMEOUT_MILLIS);
+            // interrupt if the shutdown command can't be added
+            if (!inbound.offer(SHUTDOWN, SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                logger.error("Could not queue the shutdown command within {}ms; "
+                        + "interrupting the matcher", SHUTDOWN_TIMEOUT_MILLIS);
                 matcher.interrupt();
             }
             matcher.join(SHUTDOWN_TIMEOUT_MILLIS);
@@ -214,8 +252,10 @@ public final class OrderGateway {
             Thread.currentThread().interrupt();
         }
 
-        logger.info("Gateway stopped: {} orders processed, {} trades, {} rejected",
-                ordersProcessed.get(), tradesExecuted.get(), ordersRejected.get());
+        logger.info("Gateway stopped: {} orders processed, {} trades, {} rejected, "
+                        + "{} cancelled, {} cancels missed",
+                ordersProcessed.get(), tradesExecuted.get(), ordersRejected.get(),
+                ordersCancelled.get(), cancelsMissed.get());
     }
 
     /** @return how many orders the matcher has handed to the engine, rejections included */
@@ -231,5 +271,15 @@ public final class OrderGateway {
     /** @return how many orders the engine refused; always 0 for well-formed flow */
     public long ordersRejected() {
         return ordersRejected.get();
+    }
+
+    /** @return how many cancels removed a resting order */
+    public long ordersCancelled() {
+        return ordersCancelled.get();
+    }
+
+    /** @return how many cancels named an order already gone from the book. Routine, not a fault. */
+    public long cancelsMissed() {
+        return cancelsMissed.get();
     }
 }

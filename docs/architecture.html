@@ -192,7 +192,7 @@ footer a{color:var(--accent)}
 
   <rect x="16" y="204" width="868" height="78" rx="10" fill="var(--boundary)" class="svg-lane"/>
   <text x="32" y="226" class="svg-lane-label">BOUNDARY 1 &#183; ORDER HANDOFF</text>
-  <text x="32" y="252" class="svg-t svg-mono">LinkedBlockingQueue&lt;Order&gt;</text>
+  <text x="32" y="252" class="svg-t svg-mono">LinkedBlockingQueue&lt;Command&gt;</text>
   <text x="32" y="270" class="svg-t-sm">capacity 1000 &#183; back-pressures the producer when full</text>
   <g>
     <rect x="500" y="236" width="26" height="28" rx="4" fill="var(--accent-soft)" stroke="var(--lane-edge)"/>
@@ -338,7 +338,7 @@ footer a{color:var(--accent)}
       <td><code>matcher</code></td>
       <td><code>OrderGateway.start()</code></td>
       <td><code>OrderBook</code>, every <code>PriceLevel</code>, every resting <code>Order</code></td>
-      <td>a poison-pill order, so the queued backlog drains first. Offered with a timeout, not
+      <td>a queued <code>Shutdown</code> command, so the backlog drains first. Offered with a timeout, not
           <code>put()</code>, so a full queue cannot make shutdown hang; interrupt is the
           last-resort fallback</td>
     </tr>

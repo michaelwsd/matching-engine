@@ -72,7 +72,8 @@ public final class MidPriceWalk {
         // step the current mid
         long step = random.nextLong(-stepSize, stepSize + 1);
         // clamp the new value to between the right bounds
-        return Math.clamp(mid + step, floor(), ceiling());
+        mid = Math.clamp(mid + step, floor(), ceiling());
+        return mid;
     }
 
     /** @return the current mid, without advancing the walk */

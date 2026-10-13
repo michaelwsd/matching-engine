@@ -1,6 +1,8 @@
 package com.mwang.gateway;
 
+import com.mwang.book.OrderBook;
 import com.mwang.engine.MatchingEngine;
+import com.mwang.engine.PriceTimeMatchingEngine;
 import com.mwang.exception.InvalidOrderException;
 import com.mwang.model.Order;
 import com.mwang.model.OrderType;
@@ -283,7 +285,7 @@ class OrderGatewayTest {
 
     /**
      * Shutdown must return even when the matcher will never come back <em>and</em> the queue
-     * has no room for the poison pill.
+     * has no room for the shutdown command.
      *
      * <p>A blocking {@code put} of the pill would wait for a slot only the wedged matcher
      * could free, so it would wait forever - and the {@code join} that is meant to bound the
@@ -299,7 +301,7 @@ class OrderGatewayTest {
      */
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
-    void shouldStopWaitingForThePoisonPillWhenTheQueueIsFullAndTheMatcherIsWedged()
+    void shouldStopWaitingForTheSentinelWhenTheQueueIsFullAndTheMatcherIsWedged()
             throws Exception {
         CountDownLatch reachedEngine = new CountDownLatch(1);
         gateway = new OrderGateway(order -> {
@@ -330,6 +332,122 @@ class OrderGatewayTest {
         assertThat(gateway.ordersProcessed())
                 .as("the wedged order never completed, so nothing was counted")
                 .isZero();
+    }
+
+    // --- cancel ---
+
+    /**
+     * The point of the whole Command refactor: a cancel reaches a <em>resting</em> order. The
+     * flag-on-a-queued-order approach could only ever have reached orders still in the queue,
+     * which is the fraction of their life when cancelling does not matter.
+     */
+    @Test
+    void shouldCancelAnOrderThatIsRestingOnTheBook() throws Exception {
+        OrderBook book = new OrderBook();
+        startWith(new PriceTimeMatchingEngine(book));
+
+        gateway.submit(buy(1));
+        gateway.cancel(1);
+        gateway.shutdown();     // blocks until both commands have been applied
+
+        assertThat(book.bestBid())
+                .as("the resting bid should be gone")
+                .isEqualTo(OrderBook.NO_PRICE);
+        assertThat(gateway.ordersCancelled()).isOne();
+        assertThat(gateway.cancelsMissed()).isZero();
+    }
+
+    /**
+     * Queueing the cancel is what removes the race. The queue is FIFO, so a cancel enqueued
+     * after its submit is always applied after it - there is no window where the order is
+     * neither queued nor resting, and therefore no cancel that silently does nothing.
+     */
+    @Test
+    void shouldApplyACancelAfterTheSubmitItFollowsEvenWhenBothAreQueuedAtOnce() throws Exception {
+        OrderBook book = new OrderBook();
+        startWith(new PriceTimeMatchingEngine(book));
+
+        for (long id = 1; id <= 50; id++) {
+            gateway.submit(buy(id));
+            gateway.cancel(id);
+        }
+        gateway.shutdown();
+
+        assertThat(book.bestBid())
+                .as("every order was cancelled, so no bid should remain")
+                .isEqualTo(OrderBook.NO_PRICE);
+        assertThat(gateway.ordersCancelled()).isEqualTo(50);
+        assertThat(gateway.cancelsMissed())
+                .as("none of these cancels should have lost a race")
+                .isZero();
+    }
+
+    /**
+     * A strategy pulling a quote at the moment it fills is routine, not a fault. It must be
+     * counted, must not be logged as a warning, and above all must not kill the matcher.
+     */
+    @Test
+    void shouldCountACancelForAnOrderThatIsNoLongerOnTheBook() throws Exception {
+        OrderBook book = new OrderBook();
+        startWith(new PriceTimeMatchingEngine(book));
+
+        gateway.cancel(999);            // never submitted
+        gateway.submit(buy(1));         // must still be matched afterwards
+        gateway.shutdown();
+
+        assertThat(gateway.cancelsMissed()).isOne();
+        assertThat(gateway.ordersCancelled()).isZero();
+        assertThat(gateway.ordersProcessed())
+                .as("a missed cancel must not stop the matcher")
+                .isOne();
+        assertThat(book.bestBid()).isEqualTo(10000);
+    }
+
+    /**
+     * {@code MatchingEngine} stays a functional interface, so {@code cancel} is a default that
+     * throws. A lambda engine holds no book and genuinely cannot cancel; failing loudly is
+     * better than a cancel that quietly does nothing.
+     */
+    @Test
+    void shouldFailLoudlyWhenTheEngineCannotCancel() {
+        MatchingEngine lambdaEngine = order -> List.of();
+
+        assertThatThrownBy(() -> lambdaEngine.cancel(1))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("does not support cancel");
+    }
+
+    @Test
+    void cancelBeforeStartShouldThrow() {
+        gateway = new OrderGateway(order -> List.of());
+
+        assertThatThrownBy(() -> gateway.cancel(1))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not running");
+    }
+
+    @Test
+    void cancelAfterShutdownShouldThrow() throws Exception {
+        startWith(order -> List.of());
+        gateway.shutdown();
+
+        assertThatThrownBy(() -> gateway.cancel(1))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not running");
+    }
+
+    /**
+     * Wrapping the order in a Command moved where a null fails. Without the check in
+     * {@code Command.Submit}, a null would travel the queue and blow up on the matcher thread,
+     * with nothing left in the stack trace to say who queued it.
+     */
+    @Test
+    void shouldRejectANullOrderAtTheCallSite() {
+        startWith(order -> List.of());
+
+        assertThatThrownBy(() -> gateway.submit(null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("order");
     }
 
     // --- fixtures ---

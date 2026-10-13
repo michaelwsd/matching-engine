@@ -19,7 +19,7 @@ Five threads. One queue in, immutable snapshots out.
   └──────────────────────┬───────────────────────┘
                          │ submit()  blocks when full
   ╔══════════════════════▼═══════════════════════╗
-  ║ BlockingQueue<Order>, capacity 1000          ║
+  ║ BlockingQueue<Command>, capacity 1000        ║
   ╚══════════════════════╤═══════════════════════╝
   MATCHER THREAD         │ take()
   ┌──────────────────────▼───────────────────────┐
@@ -123,7 +123,7 @@ A healthy run's totals reconcile with each other and with the CSV:
 
 ```
 INFO [main] OrderFlowDriver - Order flow stopped after 920 orders
-INFO [main] OrderGateway    - Gateway stopped: 920 orders processed, 672 trades, 0 rejected
+INFO [main] OrderGateway    - Gateway stopped: 920 orders processed, 672 trades, 0 rejected, 0 cancelled, 0 cancels missed
 INFO [main] TradeLogger     - Trade log closed, 672 trades written to logs/trades.csv
 ```
 
@@ -206,11 +206,21 @@ Decisions worth recording, with the reason rather than just the rule.
   queue orders, one matcher drains. The engine and book are reachable from that thread only,
   so they need no locks, deadlock is structurally impossible, and queue position *is* arrival
   order - which is what makes time priority a deterministic, auditable fact.
+- **The gateway carries commands, not orders.** A `sealed interface Command permits Submit,
+  Cancel, Shutdown` over one `BlockingQueue`. Cancel has to travel the same queue as submit,
+  or it could only reach orders still queued rather than the resting ones that actually need
+  pulling - and a caller mutating a resting order directly would break the confinement every
+  other decision here depends on. Being sealed makes the matcher's `switch` exhaustive, so a
+  fifth command is a compile error until it is handled. `Shutdown` as a real case also
+  replaces a sentinel `Order` with magic field values.
+- **A cancel for an order that already filled is normal flow.** Counted in `cancelsMissed`
+  and logged at `DEBUG`, not `WARN`. A quoting strategy loses that race constantly, and
+  warning on it would bury the rejections that mean something.
 - **Consumers stop with a poison pill, producers with an interrupt.** A consumer owes work it
   has already accepted, so a sentinel queued behind the last real item drains the backlog. A
   producer owes nothing and nothing feeds it, so no sentinel could reach it - only an
   interrupt wakes a thread parked in `put()`.
-- **The poison pill is offered with a timeout, never `put()`.** A blocking `put` waits for a
+- **The sentinel is offered with a timeout, never `put()`.** A blocking `put` waits for a
   slot only the stalled consumer could free, and the `join` meant to bound shutdown sits
   after it. Shutdown would hang with no log line saying why. A test wedges the matcher and
   fills the queue to prove it comes back.
