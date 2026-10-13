@@ -13,6 +13,8 @@ import com.mwang.feed.MarketDataSnapshot;
 import com.mwang.marketdata.MarketDataGenerator;
 import com.mwang.marketdata.MidPriceWalk;
 import com.mwang.marketdata.OrderFlowDriver;
+import com.mwang.model.OrderIdAllocator;
+import com.mwang.strategy.StrategyRunner;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -47,6 +49,14 @@ public class Main {
     private static final int MIN_QUANTITY = 10;
     private static final int MAX_QUANTITY = 100;
     private static final int ACCOUNT_COUNT = 8;
+
+    /**
+     * Reserved for a Phase 5 strategy quoting into the same book. Derived from
+     * {@link #ACCOUNT_COUNT} rather than hardcoded, because self-trade prevention silently
+     * drops an order meeting a resting order from the same account - so a strategy sharing an
+     * account with the synthetic flow would appear to quote and have no quote.
+     */
+    static final int STRATEGY_ACCOUNT = ACCOUNT_COUNT + 1;
 
     /** Where the audit trail is appended. Not in src/, and target/ is already gitignored. */
     private static final Path TRADE_LOG = Path.of("logs", "trades.csv");
@@ -124,8 +134,11 @@ public class Main {
         OrderGateway gateway = new OrderGateway(engine, tradeLogger.andThen(publishSnapshot));
 
         MidPriceWalk walk = new MidPriceWalk(REFERENCE_MID, TICK_STEP, MAX_DEVIATION, WALK_SEED);
-        MarketDataGenerator generator = new MarketDataGenerator(
-                walk, QUOTE_OFFSET, MIN_QUANTITY, MAX_QUANTITY, ACCOUNT_COUNT, GENERATOR_SEED);
+        // One allocator, shared by everything that submits to this book. A Phase 5 strategy
+        // draws from the same sequence, so its quotes cannot collide with this flow.
+        OrderIdAllocator orderIds = new OrderIdAllocator();
+        MarketDataGenerator generator = new MarketDataGenerator(walk, orderIds,
+                QUOTE_OFFSET, MIN_QUANTITY, MAX_QUANTITY, ACCOUNT_COUNT, GENERATOR_SEED);
         OrderFlowDriver driver = new OrderFlowDriver(generator, gateway, DRIVER_SEED);
 
         // implements the get() method in Supplier (functional interface)

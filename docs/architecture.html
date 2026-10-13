@@ -316,6 +316,10 @@ footer a{color:var(--accent)}
   <span><i style="background:var(--boundary)"></i>thread boundary</span>
 </div>
 
+<p class="muted">The diagram shows what <strong>runs today</strong>. Phase 5's strategy thread
+is built and tested but not yet wired into <code>Main</code>, so it is documented below rather
+than drawn here - see <a href="#strategy">com.mwang.strategy</a>.</p>
+
 <h2>The threads</h2>
 
 <table>
@@ -354,6 +358,13 @@ footer a{color:var(--accent)}
       <td>nothing. It reads a published snapshot and shares no state at all</td>
       <td><code>server.stop(1)</code>, then the executor is closed - which
           <code>HttpServer.stop</code> does not do for you</td>
+    </tr>
+    <tr>
+      <td><code>strategy</code> <em>(not yet wired)</em></td>
+      <td><code>StrategyRunner.start()</code></td>
+      <td>the strategy's position and its live quote ids</td>
+      <td>a queued <code>Shutdown</code> command, so the fills it owes its position are
+          delivered first</td>
     </tr>
   </tbody>
 </table>
@@ -419,6 +430,11 @@ instead of sharing a structure.</p>
       mutable field, <code>remainingQuantity</code>. Prices are scaled <code>long</code> ticks,
       never <code>double</code>.</li>
     <li><b>Trade</b> - a value: immutable record, priced at the resting order's price.</li>
+    <li><b>OrderIdAllocator</b> - one shared <code>AtomicLong</code>, drawn on by every
+      participant submitting to the same book. A book rejects a duplicate id while the first
+      order still rests, so sharing one sequence makes collision impossible where separate
+      bases only make it unlikely. The one place in the project where the atomicity is
+      load-bearing rather than defensive: two threads really do draw at once.</li>
     <li><b>Side</b>, <b>OrderType</b> - enums.</li>
   </ul>
 </div>
@@ -490,6 +506,24 @@ instead of sharing a structure.</p>
   </ul>
 </div>
 
+<div class="pkg" id="strategy">
+  <h4>com.mwang.strategy</h4>
+  <ul>
+    <li><b>Strategy</b> - one method, <code>onFill(Trade)</code>, called on the strategy thread.
+      Holds its own gateway and snapshot supplier, so this interface passes neither and the
+      runner stays free of any opinion about trading.</li>
+    <li><b>StrategyRunner</b> - the <code>MatchListener</code> that makes the above safe. Its
+      <code>onMatch</code> runs on the matcher thread and does nothing but <code>offer</code> a
+      fill onto its own queue. A strategy quoting directly from <code>onMatch</code> would have
+      the matcher adding two quotes for every order it removes, filling the queue it alone
+      drains until <code>put()</code> blocks it permanently - a cycle rather than a chain. A
+      test reproduces that shape and times out, to prove the guard works.</li>
+    <li><b>Command</b> - <code>Fill</code> or <code>Shutdown</code>, sealed. A sentinel
+      <code>Trade</code> reaching a strategy would be booked as a real execution and corrupt its
+      position silently, which is the sharpest reason of the three queues to type the signal.</li>
+  </ul>
+</div>
+
 <div class="pkg" id="app">
   <h4>com.mwang &middot; com.mwang.exception</h4>
   <ul>
@@ -521,6 +555,26 @@ instead of sharing a structure.</p>
   <b>Only immutable values cross</b>
   <p>Orders go in through a queue; snapshots come out through an atomic reference. Neither
   direction ever passes a mutable structure between threads, so neither needs a lock.</p>
+</div>
+
+<div class="rule">
+  <b>Never feed a queue you alone drain</b>
+  <p>The matcher must not <code>put()</code> onto its own inbound queue. Doing so - via a
+  listener that submits - adds more per cycle than it removes, fills the queue, and blocks the
+  one thread that could free a slot. That is why strategy code runs on its own thread and
+  reaches the matcher only through the queue, and why the audit log <code>offer</code>s rather
+  than blocks. A chain, never a cycle.</p>
+</div>
+
+<div class="rule">
+  <b>Control signals are typed, not faked</b>
+  <p>All three queues carry a sealed <code>Command</code> - <code>Submit</code>/<code>Cancel</code>/
+  <code>Shutdown</code>, <code>Append</code>/<code>Shutdown</code>,
+  <code>Fill</code>/<code>Shutdown</code>. Shutting a consumer down needs a sentinel that
+  arrives in order behind real work; using a fake <code>Order</code> or <code>Trade</code> with
+  values chosen to satisfy a validator puts a bogus execution one missed identity check away
+  from the book. A sealed case is checked by the compiler, and the exhaustive
+  <code>switch</code> means a fourth instruction cannot be silently ignored.</p>
 </div>
 
 <div class="rule">

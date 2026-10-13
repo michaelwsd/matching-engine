@@ -1,6 +1,7 @@
 package com.mwang.marketdata;
 
 import com.mwang.model.Order;
+import com.mwang.model.OrderIdAllocator;
 import com.mwang.model.OrderType;
 import com.mwang.model.Side;
 
@@ -15,8 +16,10 @@ import java.util.Random;
  * sells only above would give a book that never crosses and so never trades. A buy above the
  * mid is what makes some of this flow aggressive.
  *
- * <p>Order ids run in sequence from 1, so a stream is unique within one generator and
- * reproducible from the same seed.
+ * <p>Order ids come from a shared {@link OrderIdAllocator}, so a strategy quoting into the same
+ * book cannot collide with this flow. Accounts run {@code 1..accountCount}; anything sharing the
+ * book must use a higher one, or self-trade prevention silently drops its orders -
+ * see {@link #accountCount()}.
  *
  * <p>Not thread-safe: {@link #nextOrder()} advances both the walk and this class's own random
  * sequence. Confine one generator to one thread.
@@ -29,8 +32,7 @@ public final class MarketDataGenerator {
     private final int minQuantity;
     private final int maxQuantity;
     private final int accountCount; // every order picks a random account from this range
-
-    private long nextOrderId = 1;
+    private final OrderIdAllocator ids;
 
     /**
      * @param walk         supplies the mid price that each order is priced around
@@ -49,12 +51,14 @@ public final class MarketDataGenerator {
      * @throws NullPointerException     if {@code walk} is null
      */
     public MarketDataGenerator(MidPriceWalk walk,
+                               OrderIdAllocator ids,
                                long maxOffset,
                                int minQuantity,
                                int maxQuantity,
                                int accountCount,
                                long seed) {
         Objects.requireNonNull(walk, "walk");
+        Objects.requireNonNull(ids, "ids");
         if (maxOffset <= 0) {
             throw new IllegalArgumentException("maxOffset must be positive: " + maxOffset);
         }
@@ -77,6 +81,7 @@ public final class MarketDataGenerator {
         }
 
         this.walk = walk;
+        this.ids = ids;
         this.random = new Random(seed);
         this.maxOffset = maxOffset;
         this.minQuantity = minQuantity;
@@ -84,10 +89,28 @@ public final class MarketDataGenerator {
         this.accountCount = accountCount;
     }
 
+    /**
+     * Creates a generator with its <strong>own</strong> id sequence. Correct only when nothing
+     * else submits to the same book - otherwise pass a shared {@link OrderIdAllocator}.
+     */
+    public MarketDataGenerator(MidPriceWalk walk, long maxOffset, int minQuantity,
+                               int maxQuantity, int accountCount, long seed) {
+        this(walk, new OrderIdAllocator(), maxOffset, minQuantity, maxQuantity, accountCount, seed);
+    }
+
     /** Creates a generator with an arbitrary seed, for demonstrations rather than tests. */
     public MarketDataGenerator(MidPriceWalk walk, long maxOffset, int minQuantity,
                                int maxQuantity, int accountCount) {
         this(walk, maxOffset, minQuantity, maxQuantity, accountCount, new Random().nextLong());
+    }
+
+    /**
+     * @return the highest account id this generator issues. Anything else submitting to the same
+     *         book must use a higher one: self-trade prevention rejects an incoming order that
+     *         meets a resting order from the same account, and does so silently.
+     */
+    public int accountCount() {
+        return accountCount;
     }
 
     /**
@@ -106,7 +129,7 @@ public final class MarketDataGenerator {
         long price = mid + random.nextLong(-maxOffset, maxOffset + 1);
         int quantity = random.nextInt(minQuantity, maxQuantity + 1);
         int account = random.nextInt(1, accountCount + 1);
-        return new Order(account, nextOrderId++, price, quantity, side, OrderType.LIMIT,
+        return new Order(account, ids.next(), price, quantity, side, OrderType.LIMIT,
                 System.currentTimeMillis());
     }
 }

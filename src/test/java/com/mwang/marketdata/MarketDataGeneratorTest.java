@@ -2,6 +2,7 @@ package com.mwang.marketdata;
 
 import com.mwang.book.OrderBook;
 import com.mwang.engine.MatchingEngine;
+import com.mwang.model.OrderIdAllocator;
 import com.mwang.engine.PriceTimeMatchingEngine;
 import com.mwang.model.Order;
 import com.mwang.model.OrderType;
@@ -368,6 +369,56 @@ class MarketDataGeneratorTest {
                 walk(), MAX_OFFSET, MIN_QUANTITY, MAX_QUANTITY, 1))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("accountCount");
+    }
+
+    // --- shared id allocation ---
+
+    /**
+     * Gap 3's first half. A strategy quoting into the same book draws from the same allocator,
+     * so it can never pick an id the generator is still using - the collision that would
+     * otherwise surface mid-run as {@code InvalidOrderException: Order id already in use}.
+     */
+    @org.junit.jupiter.api.Test
+    void shouldNotIssueAnIdAnotherDrawerOfTheSameAllocatorHasTaken() {
+        OrderIdAllocator shared = new OrderIdAllocator();
+        MarketDataGenerator generator = new MarketDataGenerator(
+                new MidPriceWalk(10_000, 5, 100, 1), shared, 20, 1, 10, 4, 2);
+
+        java.util.Set<Long> ids = new java.util.HashSet<>();
+        for (int i = 0; i < 100; i++) {
+            ids.add(generator.nextOrder().getOrderId());
+            ids.add(shared.next());             // stands in for the strategy
+        }
+
+        assertThat(ids)
+                .as("200 draws from one allocator must all be distinct")
+                .hasSize(200);
+    }
+
+    /** Two generators with their own allocators both start at 1, which is why sharing matters. */
+    @org.junit.jupiter.api.Test
+    void shouldCollideWhenEachDrawerKeepsItsOwnAllocator() {
+        MidPriceWalk walk = new MidPriceWalk(10_000, 5, 100, 1);
+        MarketDataGenerator first = new MarketDataGenerator(walk, 20, 1, 10, 4, 2);
+        MarketDataGenerator second = new MarketDataGenerator(walk, 20, 1, 10, 4, 3);
+
+        assertThat(first.nextOrder().getOrderId())
+                .as("separate allocators both start at 1 - this is the hazard")
+                .isEqualTo(second.nextOrder().getOrderId());
+    }
+
+    /**
+     * Gap 3's second half. The generator publishes its account range so a strategy can pick
+     * outside it; self-trade prevention drops a same-account order without any error.
+     */
+    @org.junit.jupiter.api.Test
+    void shouldReportTheAccountRangeItUses() {
+        MarketDataGenerator generator = new MarketDataGenerator(
+                new MidPriceWalk(10_000, 5, 100, 1), 20, 1, 10, 6, 2);
+
+        assertThat(generator.accountCount()).isEqualTo(6);
+        assertThat(java.util.stream.Stream.generate(generator::nextOrder).limit(300))
+                .allSatisfy(order -> assertThat(order.getAccountId()).isBetween(1L, 6L));
     }
 
     // --- fixtures ---

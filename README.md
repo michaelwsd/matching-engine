@@ -9,49 +9,66 @@ concepts on top of a working system - nothing is thrown away between phases.
 
 ## Architecture
 
-Five threads. One queue in, immutable snapshots out.
+Five threads today, six once Phase 5 is wired. One queue in, immutable values out.
 
 ```
   PRODUCER THREAD
-  ┌──────────────────────────────────────────────┐
-  │ MidPriceWalk -> MarketDataGenerator          │
-  │ OrderFlowDriver, about 50 orders/sec         │
-  └──────────────────────┬───────────────────────┘
-                         │ submit()  blocks when full
-  ╔══════════════════════▼═══════════════════════╗
-  ║ BlockingQueue<Command>, capacity 1000        ║
-  ╚══════════════════════╤═══════════════════════╝
-  MATCHER THREAD         │ take()
-  ┌──────────────────────▼───────────────────────┐
-  │ OrderGateway.matchLoop                       │
-  │   PriceTimeMatchingEngine                    │
-  │     OrderBook           no locks, confined   │
-  │   MatchListener.onMatch(order, trades)       │
-  └───────────┬──────────────────────┬───────────┘
-              │                      │
-  ╔═══════════▼══════════╗  ╔════════▼═══════════════════════╗
-  ║ Queue<Trade>         ║  ║ AtomicReference<Status>        ║
-  ║ offer(), drops full  ║  ║ set(immutable BookSnapshot)    ║
-  ╚═══════════╤══════════╝  ╚════════╤═══════════════╤═══════╝
-              │ take()               │ get()         │ get()
-  ┌───────────▼──────────┐  ┌────────▼──────┐  ┌─────▼──────────────┐
-  │ TRADE-WRITER THREAD  │  │ MAIN THREAD   │  │ VIRTUAL THREAD/req │
-  │ TradeLogger          │  │ live redraw   │  │ BookFeedServer     │
-  │ -> logs/trades.csv   │  │ 5 frames/sec  │  │ -> GET :8080/book  │
-  └──────────────────────┘  └───────────────┘  └────────────────────┘
+  ┌─────────────────────────────────────────────────────────────────────────────────┐
+  │ MidPriceWalk -> MarketDataGenerator                                             │
+  │ OrderFlowDriver, about 50 orders/sec                                            │
+  └────────────────────────────────────────┬────────────────────────────────────────┘
+                                           │ submit()  blocks when full
+  ╔════════════════════════════════════════▼════════════════════════════════════════╗
+  ║ BlockingQueue<Command>, capacity 1000                                           ║
+  ║ Phase 5 quotes rejoin here, as ordinary submits                                 ║
+  ╚════════════════════════════════════════╤════════════════════════════════════════╝
+  MATCHER THREAD                           │ take()
+  ┌────────────────────────────────────────▼────────────────────────────────────────┐
+  │ OrderGateway.matchLoop                                                          │
+  │   PriceTimeMatchingEngine                                                       │
+  │     OrderBook          no locks, confined to this thread                        │
+  │   MatchListener.onMatch(order, trades)                                          │
+  └───────┬──────────────────────────┬───────────────────────────────┬──────────────┘
+          │                          │                               │
+  ╔═══════▼════════╗ ╔═══════════════▼═══════════════╗ ╔═════════════▼══════════════╗
+  ║ Queue<Trade>   ║ ║ AtomicReference<Status>       ║ ║ Queue<Command>             ║
+  ║ offer, drops   ║ ║ set(immutable BookSnapshot)   ║ ║ StrategyRunner, drops      ║
+  ╚═══════╤════════╝ ╚══════╤════════════════╤═══════╝ ╚═════════════╤══════════════╝
+          │ take() / get()  │                │                       │
+  ┌───────▼────────┐ ┌──────▼───────┐ ┌──────▼───────┐ ┌─────────────▼──────────────┐
+  │ TRADE-WRITER   │ │ MAIN THREAD  │ │ HTTP, virtual│ │ STRATEGY THREAD  not wired │
+  │ TradeLogger    │ │ live redraw  │ │ thread/req   │ │ Strategy.onFill -> Position│
+  │ logs/trades.csv│ │ 5 frames/sec │ │ :8080/book   │ │ quotes -> the gateway queue│
+  └────────────────┘ └──────────────┘ └──────────────┘ └────────────────────────────┘
 ```
 
-Three boundaries, each a deliberate choice:
+Four boundaries, each a deliberate choice:
 
 | Boundary | Mechanism | On overload |
 |---|---|---|
 | Order handoff | `BlockingQueue`, capacity 1000 | **block** - the producer can wait |
 | Audit | `BlockingQueue` + `offer` | **drop** and count - the matcher cannot wait |
 | Publication | `AtomicReference<Status>` | overwrite - readers only want the latest |
+| Strategy fills | `BlockingQueue` + `offer` | **drop** and count - a drop means a wrong position |
 
 The engine and book hold no locks. They are confined to the matcher thread, so the only
 things crossing a boundary are orders in and immutable values out.
 [`docs/architecture.html`](docs/architecture.html) draws this in full detail.
+
+### Phase 5 extension point
+
+The strategy column is **built and tested but not yet wired into `Main`** - there is no
+`Strategy` implementation to run yet. Everything else in the diagram runs today.
+
+It gets its own thread rather than quoting straight from `onMatch` because the matcher would
+otherwise be adding two quotes for every order it removes, filling the queue it alone drains
+until `put()` blocks it permanently. A chain, never a cycle. A test reproduces that shape and
+times out, so the guard cannot be removed unnoticed.
+
+Its two inputs are deliberately different mechanisms: **fills** arrive on a queue, because
+missing one leaves the position permanently wrong, while **market data** is pulled from the
+published snapshot, because only the newest value matters. Events must all be received; state
+only needs the latest.
 
 ## Stack
 
@@ -144,7 +161,7 @@ run.sh                      compile if needed, then run
 
 | Package | Holds |
 |---|---|
-| `model` | `Order`, `Trade`, `Side`, `OrderType` |
+| `model` | `Order`, `Trade`, `Side`, `OrderType`, `OrderIdAllocator` |
 | `book` | `OrderBook`, `PriceLevel`, `DepthLevel`, `BookSnapshot` |
 | `engine` | `MatchingEngine` and its price-time implementation |
 | `exception` | `OrderException` and its two subtypes |
@@ -216,6 +233,17 @@ Decisions worth recording, with the reason rather than just the rule.
   replaces a sentinel `Order` with magic field values. **All three queues** - order handoff,
   audit, strategy - use this same shape, each with its own package-private `Command`, so no
   fake domain object stands in for a control signal anywhere.
+- **One shared `OrderIdAllocator` for everything that submits to a book.** A book rejects a
+  duplicate id while the first order still rests, so separate counters per participant make a
+  collision unlikely rather than impossible - and the failure arrives mid-run as
+  `InvalidOrderException`. This is also the one place where an `AtomicLong`'s atomicity is
+  load-bearing rather than defensive: the producer and a strategy really do draw concurrently,
+  where a `volatile long` would hand both the same id.
+- **The strategy's account id is reserved, not chosen.** `STRATEGY_ACCOUNT = ACCOUNT_COUNT + 1`,
+  derived so the two cannot drift. Self-trade prevention rejects an incoming order that meets a
+  resting order from the same account and does so *silently* - no exception, no rejection count
+  - so a strategy sharing an account with the synthetic flow would appear to quote and have no
+  quote.
 - **Strategy code never runs on the matcher thread.** `StrategyRunner` is the `MatchListener`;
   its `onMatch` only `offer`s fills onto its own queue and returns. The strategy itself runs on
   a separate thread and submits from there. Quoting from `onMatch` would have the matcher adding
