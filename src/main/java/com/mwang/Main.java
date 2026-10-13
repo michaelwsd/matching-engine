@@ -112,7 +112,7 @@ public class Main {
         OrderBook book = new OrderBook();
         MatchingEngine engine = new PriceTimeMatchingEngine(book);
 
-        // initialize state
+        // holds reference to an object, initialize with empty status
         AtomicReference<Status> latest = new AtomicReference<>(EMPTY);
 
         // Runs on the matcher thread, so it may read the book; it publishes only an immutable
@@ -120,7 +120,7 @@ public class Main {
         // spends not matching.
         // The lambda function will match the abstract method, as there is only one abstract method
         MatchListener publishSnapshot = (order, trades) -> {
-            Status previous = latest.get();
+            Status previous = latest.get(); // the local variables will be added to the method parameters
             // update the previous state
             latest.set(new Status(book.snapshot(DEPTH_LEVELS),
                     previous.orders() + 1, previous.trades() + trades.size()));

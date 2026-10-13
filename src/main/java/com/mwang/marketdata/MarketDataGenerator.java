@@ -100,11 +100,13 @@ public final class MarketDataGenerator {
      * @return a limit order, always with a positive price and quantity
      */
     public Order nextOrder() {
+        // advance the walk to get a new mid price
         long mid = walk.next();
-        // nextBoolean() rather than Side.values()[nextInt(2)]: values() allocates a fresh array
-        // on every call, and indexing by ordinal would silently change meaning if the enum were
-        // ever reordered or extended.
+        
+        // choose a random side
         Side side = random.nextBoolean() ? Side.SELL : Side.BUY;
+
+        // create random values for the order
         long price = mid + random.nextLong(-maxOffset, maxOffset + 1);
         int quantity = random.nextInt(minQuantity, maxQuantity + 1);
         int account = random.nextInt(1, accountCount + 1);

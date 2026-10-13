@@ -122,12 +122,14 @@ public final class OrderGateway {
     private void matchLoop() {
         try {
             while (true) {
+                // take the submitted order from the queue
                 Order order = inbound.take(); // parks here when there is nothing to do
                 if (order == POISON) {
                     break;
                 }
                 List<Trade> trades = List.of();
                 try {
+                    // submit the order to the engine to get matching trades
                     trades = engine.submit(order);
                 } catch (OrderException e) {
                     // A bad order must not kill the matcher. Anything that is not an
@@ -198,6 +200,7 @@ public final class OrderGateway {
         running = false;
 
         try {
+            // interrupt if poison pill can't be added
             if (!inbound.offer(POISON, SHUTDOWN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
                 logger.error("Could not queue the poison pill within {}ms; interrupting the matcher",
                         SHUTDOWN_TIMEOUT_MILLIS);

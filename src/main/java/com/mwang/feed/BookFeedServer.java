@@ -41,6 +41,8 @@ public final class BookFeedServer implements AutoCloseable {
     private final ObjectMapper mapper = new ObjectMapper();
 
     private final int requestedPort;
+    // acts as a data provider with a single method that returns a MarketDataSnapshot
+    // implemented in main that gets the current snapshot and turns it into MarketDataSnapshot
     private final Supplier<MarketDataSnapshot> source;
 
     private HttpServer server;
@@ -69,7 +71,7 @@ public final class BookFeedServer implements AutoCloseable {
         // asks the OS to reserve this port for this program
         // 0 for system default backlog (how many incoming connections to hold when server is busy)
         server = HttpServer.create(new InetSocketAddress(requestedPort), 0);
-        // say what to do with /book
+        // say what to do with /book: use the handle function
         server.createContext(PATH, this::handle);
 
         // Without an executor, requests are serialised onto one thread. Concurrency is safe

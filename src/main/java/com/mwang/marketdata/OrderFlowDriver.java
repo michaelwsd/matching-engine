@@ -78,6 +78,7 @@ public final class OrderFlowDriver {
         }
         running = true;
 
+        // start a new thread to submit orders
         producer = new Thread(this::producerLoop, "producer");
         producer.start();
         logger.info("Order flow started, up to one order every {}ms", MAX_DELAY_MILLIS);
@@ -95,7 +96,7 @@ public final class OrderFlowDriver {
         try {
             while (running) {
                 gateway.submit(generator.nextOrder());
-                submitted.incrementAndGet();
+                submitted.incrementAndGet(); // atomic operation
                 Thread.sleep(Duration.ofMillis(random.nextLong(0, MAX_DELAY_MILLIS)));
             }
         } catch (InterruptedException e) {
@@ -123,9 +124,13 @@ public final class OrderFlowDriver {
             return;
         }
         running = false;
-        producer.interrupt(); // interrupts the producer thread in case of submitting an order
+        // the producer may submit an order and the order will be queued for a long time
+        // as the order queues, producer will not reach the next iteration, and hence
+        // won't see the running flag, hence we must terminate it manually
+        producer.interrupt();
 
         try {
+            // wait for producer to terminate
             producer.join(SHUTDOWN_TIMEOUT_MILLIS);
             if (producer.isAlive()) {
                 logger.error("Producer did not stop within {}ms", SHUTDOWN_TIMEOUT_MILLIS);

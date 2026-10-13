@@ -69,10 +69,10 @@ public final class MidPriceWalk {
      * @return the new mid, always within the configured bounds and therefore always positive
      */
     public long next() {
-        // step the current mid then clamp it to fit within the bound
+        // step the current mid
         long step = random.nextLong(-stepSize, stepSize + 1);
-        mid = clamp(mid + step);
-        return mid;
+        // clamp the new value to between the right bounds
+        return Math.clamp(mid + step, floor(), ceiling());
     }
 
     /** @return the current mid, without advancing the walk */
@@ -91,11 +91,6 @@ public final class MidPriceWalk {
     /** @return the highest mid this walk can ever produce */
     public long ceiling() {
         return referenceMid + maxDeviation;
-    }
-
-    /** Pins a candidate mid into the allowed range, which is what bounds the walk. */
-    private long clamp(long candidate) {
-        return Math.clamp(candidate, floor(), ceiling());
     }
 
     @Override

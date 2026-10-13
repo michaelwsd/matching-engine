@@ -35,11 +35,7 @@ public interface MatchListener {
     default MatchListener andThen(MatchListener next) {
         Objects.requireNonNull(next, "next");
         return (order, trades) -> {
-            // "this" is the listener andThen was called on, so for
-            // tradeLogger.andThen(publishSnapshot) the line below is tradeLogger.onMatch(...).
-            // Spelled out because the implicit receiver makes the call easy to miss. Note that
-            // inside a LAMBDA "this" is the enclosing instance; in an anonymous class it would
-            // be the anonymous object instead, and this method would recurse forever.
+            // calls onMatch on both the trade logger and public snapshot
             this.onMatch(order, trades);
             next.onMatch(order, trades);
         };
