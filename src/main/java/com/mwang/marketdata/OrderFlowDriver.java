@@ -10,18 +10,15 @@ import java.util.Random;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Generates synthetic orders on its own thread and submits them to an {@link OrderGateway}.
+ * Generates synthetic orders on its own thread and submits them to an {@link OrderGateway}. It
+ * holds no queue of its own; the gateway's is the only thread boundary.
  *
- * <p>The producer end of the pipeline. It holds no queue of its own - the gateway's is the only
- * thread boundary. Pacing is a uniform delay below {@code MAX_DELAY_MILLIS}, giving roughly 50
- * orders a second; a ceiling, not a guarantee, since a lagging matcher blocks {@code submit}
- * and paces the producer instead.
+ * <p>Pacing is a uniform delay below {@code MAX_DELAY_MILLIS}, roughly 50 orders a second. A
+ * ceiling, not a guarantee: a lagging matcher blocks {@code submit} and paces the producer.
  *
- * <p>{@link #start()} and {@link #stop()} may be called from different threads, so a shutdown
- * hook can stop this mid-startup. The generator may not - confine one per driver.
- *
- * <p><strong>Call {@code stop()} before {@link OrderGateway#shutdown()}</strong>, or the
- * producer submits into a stopped gateway and is rejected.
+ * <p>{@link #start()} and {@link #stop()} may be called from different threads; the generator
+ * may not, so confine one per driver. Call {@code stop()} before
+ * {@link OrderGateway#shutdown()}, or the producer submits into a stopped gateway.
  */
 public final class OrderFlowDriver {
 
@@ -43,9 +40,8 @@ public final class OrderFlowDriver {
     private final AtomicLong submitted = new AtomicLong();
 
     /**
-     * Whether to keep generating. {@code volatile} rather than monitor-guarded: if the producer
-     * needed this object's monitor, {@code stop()} holding it across {@link Thread#join(long)}
-     * would deadlock.
+     * Whether to keep generating. {@code volatile} rather than monitor-guarded: a producer
+     * needing this object's monitor would deadlock against {@code stop()}'s {@code join}.
      */
     private volatile boolean running;
 
@@ -79,11 +75,8 @@ public final class OrderFlowDriver {
     }
 
     /**
-     * Generates orders until asked to stop.
-     *
-     * <p>{@code while (running)} is right here where it was a bug in the matcher: a consumer has
-     * a backlog to drain, a producer does not. Belt-and-braces in practice, since {@link #stop()}
-     * always interrupts and both blocking calls throw on interruption.
+     * Generates orders until asked to stop. {@code while (running)} is right here, unlike in the
+     * matcher: a producer has no accepted backlog to drain.
      */
     private void producerLoop() {
         try {
@@ -101,15 +94,13 @@ public final class OrderFlowDriver {
     }
 
     /**
-     * Stops the producer and waits for its thread. Returns immediately if never started, or
+     * Stops the producer and waits for its thread. Returns immediately if never started or
      * already stopped.
      *
-     * <p>The flag alone is not enough: parked inside {@code put()}, the producer is not running
-     * the loop and will never read it. Only an interrupt wakes it, and unlike the matcher there
-     * is no queued-sentinel option - nothing feeds a producer.
+     * <p>Interrupts as well as clearing the flag: parked in {@code put()}, the producer never
+     * reaches the loop condition. Nothing feeds a producer, so there is no sentinel to queue.
      *
-     * <p>The order in flight when the interrupt lands is discarded, acceptable for synthetic
-     * flow. A real gateway would {@code offer()} and reject explicitly.
+     * <p>The order in flight is discarded, acceptable for synthetic flow.
      */
     public synchronized void stop() {
         if (!running) {

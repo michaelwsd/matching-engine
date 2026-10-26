@@ -47,15 +47,11 @@ class MarketDataGeneratorTest {
     // --- the generated flow must actually trade ---
 
     /**
-     * The baseline: generated flow must reach the matching engine, not merely pile up on the
-     * book. A generator that never crosses would leave the engine's matching loop unexecuted
-     * while throwing no exception and breaking no invariant.
+     * Generated flow must reach the matching engine, not merely pile up on the book.
      *
-     * <p>This is a weak test on its own, because at these parameters the walk drifts +/-500
-     * ticks while quotes sit within +/-20 of the mid, so the mid wanders into stale resting
-     * orders and trades happen even without deliberate aggression. See
-     * {@link #shouldTradeFromItsOwnAggressionRatherThanPriceDrift()} for the test that
-     * separates the two.
+     * <p>Weak on its own: the walk drifts far enough that the mid wanders into stale resting
+     * orders, so trades happen even without deliberate aggression. See
+     * {@link #shouldTradeFromItsOwnAggressionRatherThanPriceDrift()}.
      */
     @Test
     void shouldProduceFlowThatActuallyTrades() {
@@ -73,18 +69,11 @@ class MarketDataGeneratorTest {
     }
 
     /**
-     * Isolates the generator's own aggression from the walk's drift.
+     * Isolates the generator's own aggression from the walk's drift, by pinning the walk almost
+     * still so its pricing is the only possible source of crossing.
      *
-     * <p>Two things can make a trade happen here. Either the generator deliberately prices an
-     * order through the far side, or the mid wanders far enough that orders resting from an
-     * earlier price regime are crossed by accident. The second effect is large at the default
-     * parameters and masks the first entirely: pricing buys strictly below the mid and sells
-     * strictly above it - the intuitive design, which crosses nothing on purpose - still yields
-     * 6,227 trades out of 10,000 against this design's 7,320.
-     *
-     * <p>So this test pins the walk almost still, leaving the generator's own pricing as the
-     * only possible source of crossing. Measured over this flow: 6,444 trades with the signed
-     * offset, 174 without. That gap is the property being asserted.
+     * <p>Measured over this flow: 6,444 trades with the signed offset, 174 without. That gap is
+     * the property being asserted.
      */
     @Test
     void shouldTradeFromItsOwnAggressionRatherThanPriceDrift() {
@@ -110,12 +99,8 @@ class MarketDataGeneratorTest {
     }
 
     /**
-     * Ties the {@link Trade} records back to the orders they came from: every trade reduces the
-     * remaining quantity of exactly two orders, the buyer and the seller, by its own quantity.
-     * So the total filled across all orders must be twice the total traded.
-     *
-     * <p>A far wider net than the hand-built scenarios in the engine tests, because it holds
-     * over ten thousand orders nobody chose.
+     * Every trade reduces exactly two orders by its own quantity, so the total filled must be
+     * twice the total traded. A wider net than the hand-built engine scenarios.
      */
     @Test
     void shouldConserveQuantityBetweenFillsAndTrades() {
@@ -140,11 +125,7 @@ class MarketDataGeneratorTest {
 
     // --- reproducibility ---
 
-    /**
-     * Fixed seeds must give a fixed order stream. Without this, a simulation run that produced
-     * a crossed book or a conservation failure could not be replayed, and "it failed once on
-     * CI" would be unactionable.
-     */
+    /** Fixed seeds must give a fixed order stream, or a failing run cannot be replayed. */
     @Test
     void shouldProduceTheSameSequenceForTheSameSeeds() {
         List<Order> first = generate(seededGenerator(), 1_000);
@@ -204,15 +185,11 @@ class MarketDataGeneratorTest {
     }
 
     /**
-     * Recovers the hidden offset. {@code nextOrder()} draws it into a local variable and adds it
-     * to the mid, so it is never visible from outside - but the generator calls
-     * {@code walk.next()} exactly once per order, so a second walk built on the same seed
-     * replays the identical mid sequence and the offset falls out by subtraction.
+     * Recovers the hidden offset: the generator calls {@code walk.next()} once per order, so a
+     * second walk on the same seed replays the mid sequence and the offset falls out.
      *
-     * <p>Pins the {@code maxOffset + 1} in the call to {@code nextLong(origin, bound)}. That
-     * interval excludes its upper end, so dropping the {@code + 1} makes the largest upward
-     * offset one tick smaller than the largest downward one, biasing every buy quote downwards.
-     * Every other test in this class still passes when that happens.
+     * <p>Pins the {@code maxOffset + 1} in {@code nextLong(origin, bound)}, whose upper end is
+     * exclusive. Dropping it biases every quote downwards and no other test here notices.
      */
     @Test
     void shouldDrawOffsetsSymmetricallyAcrossTheWholeRange() {
@@ -253,9 +230,8 @@ class MarketDataGeneratorTest {
     }
 
     /**
-     * With one account every match is a self-trade, so self-trade prevention rejects it and the
-     * flow never trades. The constructor forbids that, but this asserts the account actually
-     * varies rather than being drawn once or hardcoded.
+     * With one account every match is a self-trade and nothing ever trades. The constructor
+     * forbids that; this asserts the account actually varies rather than being drawn once.
      */
     @Test
     void shouldUseEveryConfiguredAccount() {
@@ -335,9 +311,8 @@ class MarketDataGeneratorTest {
     }
 
     /**
-     * An offset wider than the walk's floor could price an order at or below zero, which
-     * {@link Order} rejects - so the simulation would die partway through a run rather than
-     * refuse to start. Rejecting it here turns a delayed crash into a construction failure.
+     * An offset wider than the walk's floor could price an order at zero, which {@link Order}
+     * rejects. Checking it here turns a mid-run crash into a construction failure.
      */
     @Test
     void shouldRejectAMaxOffsetThatCouldPriceAnOrderAtZero() {
@@ -374,9 +349,8 @@ class MarketDataGeneratorTest {
     // --- shared id allocation ---
 
     /**
-     * Gap 3's first half. A strategy quoting into the same book draws from the same allocator,
-     * so it can never pick an id the generator is still using - the collision that would
-     * otherwise surface mid-run as {@code InvalidOrderException: Order id already in use}.
+     * A strategy quoting into the same book draws from the same allocator, so it can never pick
+     * an id the generator is still using.
      */
     @org.junit.jupiter.api.Test
     void shouldNotIssueAnIdAnotherDrawerOfTheSameAllocatorHasTaken() {
@@ -470,9 +444,8 @@ class MarketDataGeneratorTest {
     }
 
     /**
-     * Everything about an order that a fixed pair of seeds must reproduce. The timestamp is
-     * deliberately excluded: {@code nextOrder()} reads the wall clock, so it is not
-     * reproducible, and asserting on it would make these tests flaky.
+     * Everything about an order that a fixed pair of seeds must reproduce. Excludes the
+     * timestamp, which reads the wall clock and would make these tests flaky.
      */
     private static List<Tuple> fingerprint(List<Order> orders) {
         return orders.stream()

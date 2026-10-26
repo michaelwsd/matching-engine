@@ -47,9 +47,8 @@ class OrderIdAllocatorTest {
     }
 
     /**
-     * The reason this is an {@code AtomicLong} and not a {@code volatile long}. Two threads draw
-     * at once, as the producer and a strategy will; a plain increment would hand the same id to
-     * both, and the book would reject the second order.
+     * The reason this is an {@code AtomicLong} and not a {@code volatile long}: a plain increment
+     * would hand the same id to two threads, and the book would reject the second order.
      */
     @Test
     void shouldNeverIssueTheSameIdTwiceUnderContention() throws Exception {

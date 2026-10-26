@@ -3,19 +3,16 @@ package com.mwang.marketdata;
 import java.util.Random;
 
 /**
- * A bounded random walk over a mid price, in ticks.
+ * A bounded random walk over a mid price, in ticks. {@link #next()} moves the mid by a uniformly
+ * random step, then clamps it into {@code [referenceMid - maxDeviation, referenceMid +
+ * maxDeviation]} so a long run cannot drift somewhere no order can be priced.
  *
- * <p>{@link #next()} moves the mid by a uniformly random step, then clamps it into
- * {@code [referenceMid - maxDeviation, referenceMid + maxDeviation]}. The clamp is what stops
- * it drifting: an unbounded walk has no tendency to return anywhere, so a long run would
- * eventually reach a mid no order could be built from.
- *
- * <p>Not thread-safe - {@link #next()} mutates {@code mid}. Confine one walk to one thread.
+ * <p>Not thread-safe: {@link #next()} mutates the mid. Confine one walk to one thread.
  */
 public final class MidPriceWalk {
 
-    /** The centre of the allowed range. Nothing pulls the mid back towards it; the clamp
-     *  simply stops it leaving. */
+    /** The centre of the allowed range. Nothing pulls the mid back to it; the clamp only
+     *  stops it leaving. */
     private final long referenceMid;
     private final long stepSize;
     private final long maxDeviation;
@@ -26,9 +23,8 @@ public final class MidPriceWalk {
     /**
      * @param referenceMid the level the walk is bounded around, in ticks; must be positive
      * @param stepSize     the largest single move in either direction, in ticks; must be positive
-     * @param maxDeviation how far the mid may stray either way. Positive and strictly less than
-     *                     {@code referenceMid}, so the lower bound stays above zero and every
-     *                     mid can price a limit order.
+     * @param maxDeviation how far the mid may stray either way. Positive and less than
+     *                     {@code referenceMid}, so the lower bound stays above zero.
      * @param seed         seed for the underlying generator, so that a run can be reproduced
      * @throws IllegalArgumentException if any bound is non-positive, or the deviation would
      *                                  allow the mid to reach zero
@@ -79,10 +75,7 @@ public final class MidPriceWalk {
         return mid;
     }
 
-    /**
-     * @return the lowest mid this walk can ever produce. Callers pricing orders around the mid
-     *         use this to prove their own prices stay positive.
-     */
+    /** @return the lowest mid this walk can ever produce */
     public long floor() {
         return referenceMid - maxDeviation;
     }

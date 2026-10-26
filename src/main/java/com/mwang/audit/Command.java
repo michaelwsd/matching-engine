@@ -8,11 +8,8 @@ import java.util.Objects;
  * One instruction travelling through the trade log's queue to the writer thread.
  *
  * <p>Sealed, so the writer's {@code switch} is exhaustive and a third instruction will not
- * compile until it is handled. {@link Shutdown} being a real case is the point: a sentinel
- * {@code Trade} with values chosen only to satisfy validation was checked by nothing, and would
- * have been written to the CSV as a genuine execution had it ever reached {@code write}.
- *
- * <p>Package-private: callers use {@link TradeLogger#onMatch} and {@link TradeLogger#close}.
+ * compile until it is handled. A typed {@link Shutdown} is the point: a sentinel {@code Trade}
+ * would have been written to the CSV as a genuine execution.
  */
 sealed interface Command {
 
@@ -25,9 +22,6 @@ sealed interface Command {
         }
     }
 
-    /**
-     * Stop the writer. Queued rather than signalled with a flag, so it sits behind every trade
-     * already accepted - this is a consumer with a backlog it has promised to write.
-     */
+    /** Stop the writer, behind every trade already accepted and promised to the file. */
     record Shutdown() implements Command { }
 }

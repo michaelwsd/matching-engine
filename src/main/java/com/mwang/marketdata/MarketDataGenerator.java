@@ -9,20 +9,17 @@ import java.util.Objects;
 import java.util.Random;
 
 /**
- * Turns a moving mid price into a stream of plausible limit orders.
+ * Turns a moving mid price into a stream of plausible limit orders, each with a random side,
+ * size, account and price offset from the current mid.
  *
- * <p>Each order takes a random side, size and account, and a price offset either side of the
- * current mid. That offset is <em>signed</em> on purpose: pricing buys only below the mid and
- * sells only above would give a book that never crosses and so never trades. A buy above the
- * mid is what makes some of this flow aggressive.
+ * <p>The offset is signed deliberately: pricing buys only below the mid would give a book that
+ * never crosses and so never trades.
  *
  * <p>Order ids come from a shared {@link OrderIdAllocator}, so a strategy quoting into the same
- * book cannot collide with this flow. Accounts run {@code 1..accountCount}; anything sharing the
- * book must use a higher one, or self-trade prevention silently drops its orders -
- * see {@link #accountCount()}.
+ * book cannot collide with this flow. Accounts run {@code 1..accountCount}; see
+ * {@link #accountCount()} for what anything else sharing the book must do.
  *
- * <p>Not thread-safe: {@link #nextOrder()} advances both the walk and this class's own random
- * sequence. Confine one generator to one thread.
+ * <p>Not thread-safe: {@link #nextOrder()} advances the walk and this class's own sequence.
  */
 public final class MarketDataGenerator {
 
@@ -36,17 +33,13 @@ public final class MarketDataGenerator {
 
     /**
      * @param walk         supplies the mid price that each order is priced around
-     * @param maxOffset    largest distance from the mid, in ticks. Must be positive - zero
-     *                     would price every order at the mid, which is not a market - and less
-     *                     than the walk's {@link MidPriceWalk#floor()}, so no generated price
-     *                     can reach zero and be rejected by {@link Order}.
+     * @param maxOffset    largest distance from the mid, in ticks. Positive, and less than the
+     *                     walk's {@link MidPriceWalk#floor()} so no price can reach zero.
      * @param minQuantity  smallest order size; must be positive
      * @param maxQuantity  largest order size; must be at least {@code minQuantity}
      * @param accountCount how many distinct accounts the flow comes from. At least two: with
-     *                     one, every match is a self-trade and the simulation runs forever
-     *                     without a single trade.
-     * @param seed         seeds this generator's own draws only, independently of the walk, so
-     *                     changing the quantity logic cannot disturb the price sequence.
+     *                     one, every match is a self-trade and nothing ever trades.
+     * @param seed         seeds this generator's own draws only, independently of the walk
      * @throws IllegalArgumentException if any bound is out of range
      * @throws NullPointerException     if {@code walk} is null
      */
@@ -106,8 +99,7 @@ public final class MarketDataGenerator {
 
     /**
      * @return the highest account id this generator issues. Anything else submitting to the same
-     *         book must use a higher one: self-trade prevention rejects an incoming order that
-     *         meets a resting order from the same account, and does so silently.
+     *         book must use a higher one, or self-trade prevention silently drops its orders.
      */
     public int accountCount() {
         return accountCount;

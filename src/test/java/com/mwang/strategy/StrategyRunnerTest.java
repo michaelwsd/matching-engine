@@ -68,12 +68,9 @@ class StrategyRunnerTest {
     }
 
     /**
-     * The regression guard for the whole deadlock discussion.
-     *
-     * <p>Every order trades, and the strategy answers each fill with two quotes - amplification
-     * of two, which fills the gateway's 1000-deep queue in short order. Wiring this same
-     * strategy directly as a {@code MatchListener} wedges the matcher permanently; through the
-     * runner it must keep draining and shut down inside its timeout.
+     * The deadlock regression guard. Every order trades and the strategy answers each fill with
+     * two quotes, filling the gateway's 1000-deep queue. Wired directly as a
+     * {@code MatchListener} this wedges the matcher; through the runner it must keep draining.
      */
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
@@ -181,6 +178,64 @@ class StrategyRunnerTest {
                 .isTrue();
     }
 
+    // --- the requote side ---
+
+    /** Requote ticks must reach the strategy, and on the strategy's thread like everything else. */
+    @Test
+    void shouldDeliverRequoteTicksOnTheStrategyThread() {
+        RecordingStrategy strategy = new RecordingStrategy();
+        runner = new StrategyRunner(strategy);
+        runner.start();
+
+        runner.requote();
+        runner.requote();
+        runner.stop();          // queues behind both ticks, so they are delivered first
+
+        assertThat(strategy.requotes.get()).isEqualTo(2);
+        assertThat(strategy.requoteThread.get()).isEqualTo("strategy");
+        assertThat(runner.requotesSkipped()).isZero();
+    }
+
+    /** As for fills: a throwing requote must not kill the thread and stop the strategy trading. */
+    @Test
+    void shouldSurviveAStrategyThatThrowsOnRequote() {
+        RecordingStrategy strategy = new RecordingStrategy();
+        strategy.throwOnRequote = true;
+        runner = new StrategyRunner(strategy);
+        runner.start();
+
+        runner.requote();
+        runner.requote();
+        runner.onMatch(buy(1), List.of(trade(1, 1)));
+        runner.stop();
+
+        assertThat(strategy.requotes.get()).isEqualTo(2);
+        assertThat(strategy.fills)
+                .as("a fill delivered after two throwing requotes proves the thread survived")
+                .hasSize(1);
+    }
+
+    /**
+     * A stale tick is worthless, so a full queue drops it rather than blocking the scheduler -
+     * and that drop must not be counted against the fills, where any drop is a fault.
+     */
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    void shouldDropRequoteTicksRatherThanBlockWhenTheQueueIsFull() {
+        runner = new StrategyRunner(new RecordingStrategy());    // never started: nothing drains
+
+        assertThatCode(() -> {
+            for (int i = 0; i < 150_000; i++) {
+                runner.requote();
+            }
+        }).doesNotThrowAnyException();
+
+        assertThat(runner.requotesSkipped()).isPositive();
+        assertThat(runner.dropped())
+                .as("a skipped tick is not a dropped fill")
+                .isZero();
+    }
+
     // --- lifecycle ---
 
     @Test
@@ -215,6 +270,32 @@ class StrategyRunnerTest {
     }
 
     // --- fixtures ---
+
+    /**
+     * Records both callbacks. A lambda cannot be used for the requote tests, since a lambda
+     * takes the {@link Strategy#onRequote()} default and there is nothing to observe.
+     */
+    private static final class RecordingStrategy implements Strategy {
+
+        private final List<Trade> fills = java.util.Collections.synchronizedList(new ArrayList<>());
+        private final AtomicLong requotes = new AtomicLong();
+        private final AtomicReference<String> requoteThread = new AtomicReference<>();
+        private volatile boolean throwOnRequote;
+
+        @Override
+        public void onFill(Trade trade) {
+            fills.add(trade);
+        }
+
+        @Override
+        public void onRequote() {
+            requoteThread.set(Thread.currentThread().getName());
+            requotes.incrementAndGet();
+            if (throwOnRequote) {
+                throw new IllegalStateException("requote is broken");
+            }
+        }
+    }
 
     private static Order buy(long orderId) {
         return new Order(1, orderId, 10_000, 10, Side.BUY, OrderType.LIMIT, orderId);

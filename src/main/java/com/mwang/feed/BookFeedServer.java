@@ -19,12 +19,11 @@ import java.util.function.Supplier;
 /**
  * Serves the current order book as JSON over HTTP, on {@code /book}.
  *
- * <p>Takes a supplier rather than the book, so it cannot reach matcher-owned state. The
- * supplier returns an already-published immutable snapshot, so handler threads need no locks
- * and any number of concurrent requests is safe.
+ * <p>Takes a supplier rather than the book, so it cannot reach matcher-owned state. The supplier
+ * returns an immutable snapshot, so any number of concurrent requests is safe without locks.
  *
- * <p>Start this last and {@link #close()} it first, so the exchange stops taking outside
- * traffic before its internals shut down.
+ * <p>Start this last and {@link #close()} it first, so outside traffic stops before the
+ * internals shut down.
  */
 public final class BookFeedServer implements AutoCloseable {
 
@@ -119,14 +118,12 @@ public final class BookFeedServer implements AutoCloseable {
             // source.get() hands back a market data snapshot, then turns into text
             respond(exchange, 200, mapper.writeValueAsString(source.get()));
         } catch (RuntimeException | JsonProcessingException e) {
-            // An exception escaping a handler closes the connection with no status at all, so
-            // the client sees a truncated response rather than an error. Same reasoning as the
-            // gateway's guard around a caller-supplied listener.
-
-            // JsonProcessingException is named explicitly because it is a checked IOException,
-            // not a RuntimeException, so catching the latter alone would let a serialisation
-            // failure escape past this very guard. Any other IOException is the connection
-            // itself failing, where writing a 500 to it would be pointless.
+            // An exception escaping a handler closes the connection with no status, so the
+            // client sees a truncated response rather than an error.
+            //
+            // JsonProcessingException is named explicitly: it is a checked IOException, so
+            // catching RuntimeException alone would let a serialisation failure escape. Any
+            // other IOException is the connection itself failing, where a 500 is pointless.
             logger.error("Failed to serve {}", exchange.getRequestURI(), e);
             respond(exchange, 500, "{\"error\":\"internal error\"}");
         } finally {
@@ -134,10 +131,7 @@ public final class BookFeedServer implements AutoCloseable {
         }
     }
 
-    /**
-     * Writes a response. The length header counts <em>bytes</em>, not characters, so the body
-     * is encoded once and its length taken from the result.
-     */
+    /** Writes a response. The length header counts bytes, so the body is encoded first. */
     private void respond(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", JSON);

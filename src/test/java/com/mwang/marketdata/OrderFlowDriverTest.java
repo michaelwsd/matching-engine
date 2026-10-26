@@ -30,14 +30,9 @@ class OrderFlowDriverTest {
     private final CountDownLatch engineRelease = new CountDownLatch(1);
 
     /**
-     * Order matters, and not only for tidiness.
-     *
-     * <p>The driver is stopped first because that is the documented shutdown order: a producer
-     * submitting to an already-stopped gateway gets an {@link IllegalStateException}. The filler
-     * is then stopped so it cannot refill the queue, and only then is the engine released so the
-     * matcher can drain. {@code shutdown()} would survive the queue still being full - it
-     * offers its poison pill with a timeout - but it would spend that whole timeout first and
-     * log an error, so every test here would pay five seconds to prove nothing.
+     * Order matters. The driver stops first, since a producer submitting to a stopped gateway
+     * throws; then the filler, so it cannot refill the queue; then the engine is released so the
+     * matcher can drain. Out of order, every test here would pay the five-second offer timeout.
      */
     @AfterEach
     void tearDown() throws InterruptedException {
@@ -57,12 +52,11 @@ class OrderFlowDriverTest {
     // --- stopping ---
 
     /**
-     * The regression test. A {@code stop()} that only clears a flag passes every other test in
-     * this class and fails this one, because a producer parked inside {@code put()} is not
-     * executing the loop and will never see the flag change. Only an interrupt reaches it.
+     * The regression test. A {@code stop()} that only clears a flag passes every other test here
+     * and fails this one: a producer parked in {@code put()} never reaches the loop condition.
      *
-     * <p>Measured against the broken version: {@code stop()} returned after 5010ms, having
-     * logged its own timeout error, and left the producer thread alive and parked.
+     * <p>Against the broken version, {@code stop()} returned after 5010ms and left the producer
+     * alive and parked.
      */
     @Test
     void shouldStopPromptlyEvenWhenTheProducerIsBlockedOnAFullQueue() throws Exception {
@@ -91,8 +85,7 @@ class OrderFlowDriverTest {
     }
 
     /**
-     * A thread created with {@code new Thread(...)} is non-daemon, so one that outlives
-     * {@code stop()} keeps the whole JVM alive. That is why a leaked producer shows up as a
+     * A thread from {@code new Thread(...)} is non-daemon, so a leaked producer shows up as a
      * program that will not exit.
      */
     @Test
@@ -172,8 +165,7 @@ class OrderFlowDriverTest {
 
     /**
      * The other half of a correct stop: the thread must not merely die, it must stop producing.
-     * A {@code stop()} that killed the thread without clearing the flag, or that let one more
-     * iteration through, would show up here.
+     * One extra iteration past {@code stop()} shows up here.
      */
     @Test
     void shouldSubmitNothingFurtherAfterBeingStopped() throws Exception {
@@ -279,10 +271,9 @@ class OrderFlowDriverTest {
     }
 
     /**
-     * Submits from a background thread until it parks inside {@code put()}, which can only
-     * happen once every slot is taken. Deliberately does not reference the gateway's capacity:
-     * hardcoding 1000 here would silently stop filling the queue the day that constant changed,
-     * and this test would then pass without testing anything.
+     * Submits from a background thread until it parks inside {@code put()}, which can only happen
+     * once every slot is taken. Does not reference the gateway's capacity: hardcoding 1000 would
+     * silently stop filling the queue the day that constant changed.
      */
     private void fillGatewayQueue() throws InterruptedException {
         filler = new Thread(() -> {

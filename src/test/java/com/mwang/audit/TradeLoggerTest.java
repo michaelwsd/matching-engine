@@ -65,9 +65,8 @@ class TradeLoggerTest {
     }
 
     /**
-     * Trades are an ordered record of what happened, so the file must preserve the order they
-     * were matched in. A queue plus a single writer thread guarantees that; a thread pool
-     * would not.
+     * The file must preserve match order. A queue plus one writer thread guarantees that; a
+     * thread pool would not.
      */
     @Test
     void shouldPreserveTheOrderTradesWereMatchedIn() throws Exception {
@@ -114,9 +113,8 @@ class TradeLoggerTest {
     // --- durability ---
 
     /**
-     * The flush policy is "flush once the queue is empty", so anything still buffered when the
-     * last trade arrives must be forced out by close(). If it were not, the tail of every run
-     * would be missing.
+     * The flush policy is "flush once the queue is empty", so {@code close()} must force out
+     * whatever is still buffered or the tail of every run goes missing.
      */
     @Test
     void shouldFlushEverythingBufferedWhenClosed() throws Exception {
@@ -135,14 +133,9 @@ class TradeLoggerTest {
      * The property the whole class exists for: {@link TradeLogger#onMatch} runs on the matcher
      * thread, so it must hand the work off rather than do it.
      *
-     * <p>Deliberately asserts on <em>progress</em> rather than on elapsed time. A timing bound
-     * is both flaky on a loaded machine and, measured here, not even discriminating: writing
-     * and flushing all 50,000 trades inline took 78ms, so any threshold loose enough to be
-     * safe on CI is loose enough to let a synchronous implementation pass.
-     *
-     * <p>What separates the two cleanly is how much is already on disk the moment
-     * {@code onMatch} returns. Measured: 2,028 of 50,000 when asynchronous, all 50,000 when
-     * synchronous. The assertion below sits in the gap, with a twelvefold margin.
+     * <p>Asserts on how much is already on disk when {@code onMatch} returns, not on elapsed
+     * time, which is flaky and not even discriminating here. Measured: 2,028 of 50,000 when
+     * asynchronous, all 50,000 when synchronous, so this sits in the gap with a wide margin.
      */
     @Test
     void shouldHandOffTheWritingInsteadOfDoingItOnTheCallingThread() throws Exception {

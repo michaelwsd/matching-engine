@@ -9,9 +9,8 @@ import java.util.Objects;
 /**
  * Notified after the engine has processed each order.
  *
- * <p>Runs on the matcher thread, so it may read matcher-owned state such as the book - but it
- * must be fast, since every millisecond here is one the exchange is not matching, and it must
- * hand other threads immutable values only, never the book itself.
+ * <p>Runs on the matcher thread, so it may read matcher-owned state such as the book, but it
+ * must be fast and must hand other threads immutable values only, never the book itself.
  */
 @FunctionalInterface
 public interface MatchListener {
@@ -29,8 +28,8 @@ public interface MatchListener {
      * Returns a listener that runs this one and then {@code next}. The gateway holds a single
      * listener, so this is how several are attached.
      *
-     * <p>If the first throws, the second is skipped for that order and the gateway logs it, so
-     * put the one whose record matters most - the audit log - first.
+     * <p>If the first throws, the second is skipped for that order, so order them by what a
+     * lost notification costs: the audit log first.
      */
     default MatchListener andThen(MatchListener next) {
         Objects.requireNonNull(next, "next");

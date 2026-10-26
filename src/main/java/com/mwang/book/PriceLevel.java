@@ -6,16 +6,11 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 
 /**
- * Every order resting at one price, held in arrival order.
+ * Every order resting at one price, held in arrival order. This queue is what gives the book its
+ * time priority: {@link #add} appends to the back, {@link #poll} takes from the front.
  *
- * <p>The queue is what gives the book its <em>time</em> priority: {@link #add} appends to the
- * back, {@link #poll} takes from the front, so at equal price the first to arrive is the first
- * to fill.
- *
- * <p>Package-private deliberately: {@link OrderBook} also indexes orders by id, and an outside
- * caller holding a level could remove from one structure and not the other.
- *
- * <p>Not thread-safe.
+ * <p>Package-private, because {@link OrderBook} also indexes orders by id and an outside caller
+ * holding a level could update one structure and not the other. Not thread-safe.
  */
 final class PriceLevel {
 
@@ -37,12 +32,8 @@ final class PriceLevel {
     }
 
     /**
-     * Removes one specific order, for a cancel or a completed fill.
-     *
-     * <p>Linear in the size of the level: {@link Order} does not override {@code equals}, so
-     * this is an identity scan. Acceptable because levels are shallow in practice. Making it
-     * O(1) would mean storing a node handle per order, which is the next optimisation if
-     * profiling ever points here.
+     * Removes one specific order, for a cancel or a completed fill. Linear in the size of the
+     * level, since {@link Order} does not override {@code equals} and this is an identity scan.
      *
      * @return true if the order was present and removed
      */
@@ -50,10 +41,7 @@ final class PriceLevel {
         return orders.remove(order);
     }
 
-    /**
-     * @return the total still unfilled at this price. Walks the queue, so O(n) - which is why
-     *         depth is read in snapshots rather than per order.
-     */
+    /** @return the total still unfilled at this price. Walks the queue, so O(n). */
     public long totalQuantity() {
         long quantity = 0;
         for (Order order : orders) {

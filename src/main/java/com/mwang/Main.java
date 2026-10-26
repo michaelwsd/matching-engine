@@ -24,16 +24,14 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Runs a synthetic market for a fixed duration, redrawing the order book as it goes.
+ * Runs a synthetic market for a fixed duration, redrawing the order book as it goes. Wires the
+ * pipeline by hand; {@code README.md} draws the shape.
  *
- * <p>Wires the pipeline by hand; {@code README.md} draws the shape. The one thing not visible
- * in the code below: the book is never read from here, because it is confined to the matcher
- * thread. A {@link MatchListener}, invoked <em>on that thread</em>, builds an immutable
- * {@link BookSnapshot} and publishes it through an {@link AtomicReference} that this class only
- * reads - so no lock, and no half-updated book can be rendered.
+ * <p>The book is never read from here, being confined to the matcher thread. A
+ * {@link MatchListener} running on that thread publishes an immutable {@link BookSnapshot}
+ * through an {@link AtomicReference} that this class only reads, so nothing here needs a lock.
  *
- * <p>Output goes to {@code System.out} deliberately - this is the demo's user interface, not
- * diagnostics. Components log through SLF4J.
+ * <p>Output goes to {@code System.out} because it is the demo's user interface, not diagnostics.
  */
 public class Main {
 
@@ -52,9 +50,8 @@ public class Main {
 
     /**
      * Reserved for a Phase 5 strategy quoting into the same book. Derived from
-     * {@link #ACCOUNT_COUNT} rather than hardcoded, because self-trade prevention silently
-     * drops an order meeting a resting order from the same account - so a strategy sharing an
-     * account with the synthetic flow would appear to quote and have no quote.
+     * {@link #ACCOUNT_COUNT} so it can never collide: self-trade prevention would silently drop
+     * a strategy sharing an account with the synthetic flow.
      */
     static final int STRATEGY_ACCOUNT = ACCOUNT_COUNT + 1;
 
@@ -79,10 +76,9 @@ public class Main {
     private static final String SHOW_CURSOR = "\u001B[?25h";
 
     /**
-     * Whether output is a real terminal. Redrawing in place needs ANSI cursor codes; piped
-     * output, CI logs and IntelliJ's plain console ignore them, so there we print an occasional
-     * snapshot and emit no escapes. Detection is never perfectly reliable, so
-     * {@code -Dsimulation.ansi=true|false} overrides it - the same hatch as {@code --color}.
+     * Whether output is a real terminal. Redrawing in place needs ANSI cursor codes, which piped
+     * output and CI logs ignore, so off a terminal we print occasional snapshots instead.
+     * Override the detection with {@code -Dsimulation.ansi=true|false}.
      */
     private static final boolean INTERACTIVE = detectInteractive();
 
@@ -228,16 +224,12 @@ public class Main {
     private static final String ASK_CELL = "%9s %8s";
 
     /**
-     * Prints one frame, optionally redrawing over the frame above it.
-     *
-     * <p>Redraw moves the cursor up exactly as many lines as the frame is tall. Every frame is
-     * the same height - empty depth rows are padded, not omitted - so the cursor lands where
-     * the previous frame began, and each line ends with an erase-to-end so a shorter line
-     * leaves no debris.
+     * Prints one frame, optionally redrawing over the frame above it. Every frame is the same
+     * height, empty depth rows padded rather than omitted, so the cursor lands where the
+     * previous frame began.
      *
      * <p>{@code redrawInPlace} must be false whenever anything else has printed since the last
-     * frame, or the cursor counts back over that output and overwrites it. Ignored off a
-     * terminal, where no escapes are emitted at all.
+     * frame, or the cursor counts back over that output. Ignored off a terminal.
      */
     private static void draw(List<String> lines, boolean redrawInPlace) {
         StringBuilder out = new StringBuilder();
@@ -338,17 +330,14 @@ public class Main {
         System.out.println();
     }
 
-    /**
-     * Formats a tick price as dollars and cents. Integer division rather than floating point,
-     * for the same reason prices are scaled longs in the first place.
-     */
+    /** Formats a tick price as dollars and cents, by integer division rather than floating point. */
     private static String formatPrice(long ticks) {
         return String.format("%d.%02d", ticks / 100, ticks % 100);
     }
 
     /**
      * Formats the midpoint of the spread. The mid of two adjacent ticks falls on a half tick, so
-     * this works in half-ticks and renders a trailing digit rather than dividing into a double.
+     * this works in half-ticks rather than dividing into a double.
      */
     private static String formatMid(long bid, long ask) {
         long total = bid + ask;

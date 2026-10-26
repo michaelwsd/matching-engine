@@ -22,23 +22,17 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * Appends every executed trade to a CSV file, as an audit trail.
  *
- * <p>A {@link MatchListener} runs on the matcher thread, so the exchange waits for whatever it
- * does - and a file write takes orders of magnitude longer than a match. So {@link #onMatch}
- * only queues and returns, and a writer thread does the I/O: the same producer-consumer shape
- * as {@link com.mwang.gateway.OrderGateway}, one layer out.
+ * <p>{@link #onMatch} runs on the matcher thread, where a file write would cost orders of
+ * magnitude more than a match, so it only queues and a writer thread does the I/O.
  *
- * <p><strong>Flush policy:</strong> the writer flushes whenever the queue empties, so writes
- * batch under a burst and are pushed out the moment it ends. {@code flush()} reaches the
- * operating system, not the disk, so this survives a process crash but not a power cut -
- * {@code FileChannel.force()} would be the next step.
+ * <p>The writer flushes whenever the queue empties, so writes batch under a burst. That reaches
+ * the operating system, not the disk, so this survives a crash but not a power cut.
  *
- * <p><strong>Back-pressure:</strong> {@code offer}, never {@code put}, because a full queue
- * must not stall the matcher. Drops are possible, and are counted, logged and reported at
- * close. The opposite trade-off from the gateway, because the caller differs: there a client
- * who can wait, here the matching engine, which cannot.
+ * <p>Queues with {@code offer}, never {@code put}: a full queue must not stall the matcher, so
+ * drops are possible and are counted, logged and reported at close.
  *
- * <p>Close this <strong>after</strong> the gateway has shut down, or the matcher's final trades
- * have nowhere to go.
+ * <p>Close this after the gateway has shut down, or the matcher's final trades have nowhere to
+ * go.
  */
 public final class TradeLogger implements MatchListener, AutoCloseable {
 
@@ -64,9 +58,8 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
     private volatile boolean running;
 
     /**
-     * @param file where to append trades. Parent directories are created on {@link #start()};
-     *             an existing file is appended to and the header written only when new, so a
-     *             restart cannot corrupt an earlier run's records.
+     * @param file where to append trades. Parent directories are created on {@link #start()}, an
+     *             existing file is appended to, and the header is written only when new.
      */
     public TradeLogger(Path file) {
         this.file = Objects.requireNonNull(file, "file");
@@ -117,7 +110,7 @@ public final class TradeLogger implements MatchListener, AutoCloseable {
 
     /**
      * Drains the queue onto disk until the shutdown command arrives. A queued sentinel rather
-     * than a flag, because this is a consumer with a backlog it has already promised to write.
+     * than a flag, because this backlog has already been promised to the file.
      */
     private void writeLoop() {
         try {

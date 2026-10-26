@@ -10,13 +10,11 @@ import java.util.Objects;
 /**
  * The order book as published to the outside world, serialised to JSON.
  *
- * <p>Kept separate from {@link BookSnapshot} so that the book package stays free of
- * serialisation concerns, and so the {@code -1} empty-side sentinel never reaches a consumer
- * as a price of minus one cent.
+ * <p>Separate from {@link BookSnapshot} so the book package stays free of serialisation, and so
+ * the {@code -1} empty-side sentinel never reaches a consumer as a price of minus one cent.
  *
- * <p>Prices are in <strong>ticks</strong>, one tick being one cent. Component order is the
- * JSON field order, so reordering is a breaking change. {@code spread} and {@code mid} are
- * deliberately absent: a consumer can derive them.
+ * <p>Prices are in ticks, one tick being one cent. Component order is the JSON field order, so
+ * reordering is a breaking change. Spread and mid are absent; a consumer can derive them.
  *
  * @param sequence  orders processed when this was taken, so a consumer can detect a gap
  * @param timestamp publication time in milliseconds since the Unix epoch
@@ -33,9 +31,8 @@ public record MarketDataSnapshot(long sequence,
                                  List<DepthLevel> asks) {
 
     /**
-     * Copies the lists defensively: a record copies references, not contents, so one holding a
-     * mutable list is not itself immutable. Deliberately does not check that the bid is below
-     * the ask - that invariant belongs to the book, not to a message about it.
+     * Copies the lists defensively, since a record holding a mutable list is not itself
+     * immutable. Does not check that the bid is below the ask: that invariant is the book's.
      */
     public MarketDataSnapshot {
         Objects.requireNonNull(bids, "bids");

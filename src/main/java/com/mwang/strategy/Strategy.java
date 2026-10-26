@@ -3,26 +3,33 @@ package com.mwang.strategy;
 import com.mwang.model.Trade;
 
 /**
- * Decides what to do about one of its own fills.
+ * Decides what to quote, given what the market has done and what the clock says.
  *
- * <p>Called on the strategy thread, never the matcher thread - see {@link StrategyRunner} for
- * why that distinction is the point. A strategy may therefore block: submitting to a full
- * gateway queue paces it to whatever the exchange can absorb, and slows nothing but itself.
- *
- * <p>It holds its own collaborators - the gateway it quotes into, and a supplier of the latest
- * {@link com.mwang.book.BookSnapshot} to quote around. This interface deliberately passes
- * neither, so that the runner stays pure plumbing with no opinion about trading.
- *
- * <p>Receives <em>every</em> trade on the book, not only its own. Filtering by order id happens
- * here rather than in the runner, so the set of live quote ids stays confined to this thread.
+ * <p>Every method runs on the strategy thread, one call at a time, so a strategy's own state
+ * needs no synchronisation and may block freely. It holds its own gateway and book snapshot
+ * supplier; this interface passes neither, keeping {@link StrategyRunner} free of trading logic.
  */
 @FunctionalInterface
 public interface Strategy {
 
     /**
-     * @param trade a trade that just executed, which may or may not involve this strategy
-     * @throws InterruptedException if interrupted while submitting. Propagate it - the runner
-     *                              uses interruption to shut this thread down.
+     * Reports a trade that just executed. Receives <em>every</em> trade on the book, so a
+     * strategy that cares only about its own must filter by order id.
+     *
+     * @throws InterruptedException if interrupted while submitting. Propagate it: the runner
+     *                              interrupts this thread to shut it down.
      */
     void onFill(Trade trade) throws InterruptedException;
+
+    /**
+     * Invites the strategy to replace its quotes around the book as it is now. Clock-driven, so
+     * it carries nothing, and ticks are skipped when the strategy is behind - never assume one
+     * call per interval.
+     *
+     * <p>A quoting strategy <strong>must</strong> override this: it is the only call that
+     * arrives before the first trade, so the default means never posting an opening quote.
+     *
+     * @throws InterruptedException as for {@link #onFill}
+     */
+    default void onRequote() throws InterruptedException { }
 }

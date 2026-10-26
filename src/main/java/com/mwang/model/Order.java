@@ -5,10 +5,8 @@ import com.mwang.exception.InvalidOrderException;
 import java.util.Objects;
 
 /**
- * A single order submitted to the exchange.
- *
- * <p>An entity rather than a value - its id outlives changes to its state and its remaining
- * quantity shrinks as it fills - which is why it is a class and not a record.
+ * A single order submitted to the exchange. A class rather than a record because it is an
+ * entity: its id outlives its state, and its remaining quantity shrinks as it fills.
  *
  * <p>Not thread-safe; confined to the matcher thread.
  */
@@ -29,13 +27,12 @@ public class Order {
      * @param accountId        the submitting account, used for self-trade prevention
      * @param orderId          unique identifier for this order
      * @param price            limit price in ticks of one cent, so {@code 10001} is $100.01.
-     *                         Never floating point, since binary floats cannot represent
-     *                         decimal fractions exactly. Ignored for {@link OrderType#MARKET}.
+     *                         Never floating point. Ignored for {@link OrderType#MARKET}.
      * @param originalQuantity the quantity submitted, before any fills; must be positive
      * @param side             whether this order buys or sells
      * @param orderType        limit or market
-     * @param timestamp        arrival time in milliseconds since the Unix epoch, supplied by
-     *                         the caller so tests can control arrival order
+     * @param timestamp        arrival time in milliseconds since the Unix epoch, caller-supplied
+     *                         so tests can control arrival order
      * @throws InvalidOrderException if the quantity is not positive, or a limit order has a
      *                               non-positive price
      * @throws NullPointerException  if {@code side} or {@code orderType} is null
@@ -67,10 +64,8 @@ public class Order {
     }
 
     /**
-     * Reduces the remaining quantity by the amount filled.
-     *
-     * <p>Overfilling throws rather than clamping: it means the matching logic has lost track of
-     * this order, and filling less would leave the book quietly inconsistent.
+     * Reduces the remaining quantity by the amount filled. Overfilling throws rather than
+     * clamping, since it means the matching logic has lost track of this order.
      *
      * @throws IllegalArgumentException if the quantity is not positive or exceeds what remains
      */
@@ -104,8 +99,7 @@ public class Order {
         return price;
     }
 
-    /** @return the quantity submitted, which never changes. Contrast
-     *  {@link #getRemainingQuantity()}. */
+    /** @return the quantity submitted, which never changes */
     public int getOriginalQuantity() {
         return originalQuantity;
     }

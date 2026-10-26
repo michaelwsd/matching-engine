@@ -18,18 +18,15 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * The boundary between many order sources and one matching engine.
  *
- * <p>Callers {@link #submit} and {@link #cancel} from any thread; one matcher thread drains
- * the queue and applies a {@link Command} at a time. That is the whole design: the engine and
- * book need no locks because only one thread touches them, deadlock is structurally
- * impossible, and price-time priority stays meaningful because arrival order is decided once,
- * by the queue. Both operations travel that queue, so a caller never touches a resting
- * {@link Order} - it asks the matcher to.
+ * <p>Callers {@link #submit} and {@link #cancel} from any thread; one matcher thread drains the
+ * queue and applies a {@link Command} at a time. The engine and book therefore need no locks,
+ * and arrival order - so price-time priority - is decided once, by the queue.
  *
- * <p>The queue is bounded, so a full queue blocks the submitter. That is the right
- * back-pressure here: a client can wait, and dropping an accepted order cannot be walked back.
+ * <p>The queue is bounded, so a full queue blocks the submitter rather than dropping an order
+ * already accepted.
  *
- * <p>Start this <strong>before</strong> anything submits to it, and {@link #shutdown()} it
- * before closing whatever its listener writes to.
+ * <p>Start this before anything submits to it, and {@link #shutdown()} it before closing
+ * whatever its listener writes to.
  */
 public final class OrderGateway {
 
@@ -48,10 +45,7 @@ public final class OrderGateway {
     private final MatchingEngine engine;
     private final MatchListener listener;
 
-    /**
-     * Run totals. Written only by the matcher thread but read by whoever calls
-     * {@link #shutdown()} or the accessors, so they cannot be plain {@code long}s.
-     */
+    /** Run totals. Written by the matcher thread, read by anyone, so not plain {@code long}s. */
     private final AtomicLong ordersProcessed = new AtomicLong();
     private final AtomicLong tradesExecuted = new AtomicLong();
     private final AtomicLong ordersRejected = new AtomicLong();
@@ -95,11 +89,9 @@ public final class OrderGateway {
     /**
      * Asks the matcher to take a resting order off the book. Safe to call from any thread.
      *
-     * <p>Returns nothing on purpose: a boolean could only come from blocking until the matcher
-     * had processed the cancel, turning every requote into a round trip. The outcome is in
-     * {@link #ordersCancelled()} and {@link #cancelsMissed()} instead. Cancelling an order that
-     * already filled is <em>normal</em> - a client pulls a quote as someone takes it, and one
-     * of them loses the race - so it counts as missed rather than rejected.
+     * <p>Returns nothing, since a result would mean waiting for the matcher. The outcome lands
+     * in {@link #ordersCancelled()} or {@link #cancelsMissed()}; cancelling an order that
+     * already filled is routine, not an error.
      *
      * @param orderId the order to remove
      * @throws InterruptedException  if interrupted while waiting for queue space
@@ -129,12 +121,10 @@ public final class OrderGateway {
     }
 
     /**
-     * Drains the queue into the engine until the shutdown command arrives.
+     * Drains the queue into the engine until the shutdown command arrives. {@code while (true)}
+     * rather than {@code while (running)}, so an accepted backlog is never abandoned.
      *
-     * <p>{@code while (true)} rather than {@code while (running)}: this consumer has a backlog
-     * it already accepted, and exiting on a flag would abandon it. The {@code switch} is
-     * exhaustive because {@link Command} is sealed, so a command added later will not compile
-     * until it is handled here.
+     * <p>{@link Command} is sealed, so a command added later will not compile until handled here.
      */
     private void matchLoop() {
         try {
@@ -172,9 +162,8 @@ public final class OrderGateway {
     }
 
     /**
-     * Removes one resting order. {@link UnknownOrderException} is caught apart from the other
-     * {@link OrderException}s and logged at {@code DEBUG}, not {@code WARN}: a quoting strategy
-     * loses that race constantly, and warning on it would bury the rejections that matter.
+     * Removes one resting order. {@link UnknownOrderException} logs at {@code DEBUG}, not
+     * {@code WARN}: a quoting strategy loses that race constantly.
      */
     private void applyCancel(long orderId) {
         try {
@@ -187,11 +176,8 @@ public final class OrderGateway {
     }
 
     /**
-     * Logs each trade at {@code DEBUG}, enabled with {@code -DLOG_LEVEL=DEBUG}. See
-     * {@code logback.xml} for why this is not {@code INFO}.
-     *
-     * <p>The level check guards the loop, not the formatting: SLF4J already defers formatting
-     * for a disabled call, but cannot skip iterating the list.
+     * Logs each trade at {@code DEBUG}, enabled with {@code -DLOG_LEVEL=DEBUG}. The level check
+     * guards the loop: SLF4J defers formatting on its own but still iterates the list.
      */
     private void logTrades(List<Trade> trades) {
         if (!logger.isDebugEnabled()) {
@@ -204,9 +190,8 @@ public final class OrderGateway {
     }
 
     /**
-     * Runs the listener, absorbing anything it throws. The listener is caller-supplied and runs
-     * on the matcher thread, so an unchecked exception from it would otherwise kill the matcher
-     * silently and every later order would queue up forever.
+     * Runs the listener, absorbing anything it throws. It runs on the matcher thread, so an
+     * escaping exception would kill the matcher and queue every later order forever.
      */
     private void notifyListener(Order order, List<Trade> trades) {
         try {
@@ -217,13 +202,12 @@ public final class OrderGateway {
     }
 
     /**
-     * Drains what is already queued, stops the matcher and waits for its thread. Idempotent,
-     * and safe when never started.
+     * Drains what is already queued, stops the matcher and waits for its thread. Idempotent, and
+     * safe when never started.
      *
-     * <p><strong>Queues the sentinel with {@code offer} and a timeout, never {@code put}:</strong>
-     * on a full queue with a wedged matcher a blocking {@code put} waits forever, and the
-     * {@code join} meant to bound this would never be reached. Interrupting is the fallback,
-     * last because it abandons the backlog. The audit and strategy queues do the same.
+     * <p>Queues the sentinel with {@code offer} and a timeout, never {@code put}: against a
+     * wedged matcher a {@code put} would wait forever and never reach the {@code join}.
+     * Interruption is the fallback, last because it abandons the backlog.
      */
     public synchronized void shutdown() {
         if (!running) {

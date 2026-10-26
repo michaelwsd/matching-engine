@@ -19,26 +19,23 @@ public interface MatchingEngine {
      * Matches an incoming order against resting liquidity and returns the resulting trades
      * in execution order, earliest first.
      *
-     * <p>An empty list means nothing traded, which may be because the order rested, because
-     * there was no liquidity, or because it was rejected. Callers that need to tell those
-     * apart will need a richer return type; nothing does yet.
+     * <p>An empty list means nothing traded, whether the order rested, found no liquidity, or
+     * was rejected. Callers needing to tell those apart will need a richer return type.
      *
-     * @param incoming the order to match, which may be mutated - its remaining quantity is
-     *                 reduced by whatever fills, and it is added to the book if it rests
+     * @param incoming the order to match, which may be mutated: its remaining quantity falls by
+     *                 whatever fills, and it is added to the book if it rests
      * @return the trades produced, possibly empty, never null
      */
     List<Trade> submit(Order incoming);
 
     /**
-     * Removes a resting order from the book. Must run on the thread that owns the book, so
-     * reach it by queueing a cancel on the gateway rather than calling this directly.
+     * Removes a resting order from the book. Must run on the thread that owns the book, so reach
+     * it by queueing a cancel on the gateway rather than calling this directly.
      *
-     * <p>A default rather than abstract, to keep this a {@link FunctionalInterface}. The
-     * default throws, which is the truthful answer for a lambda: {@code order -> List.of()}
-     * holds no book and has nothing to cancel. An engine that owns one overrides this.
+     * <p>A default, to keep this a {@link FunctionalInterface}. It throws, which is the honest
+     * answer for a lambda that holds no book; an engine that owns one overrides it.
      *
-     * @throws UnknownOrderException         if no such order is resting. Routine rather than
-     *                                       exceptional when a quote filled a moment earlier.
+     * @throws UnknownOrderException         if no such order is resting. Routine, not a fault.
      * @throws UnsupportedOperationException if this engine has no book
      */
     default void cancel(long orderId) {

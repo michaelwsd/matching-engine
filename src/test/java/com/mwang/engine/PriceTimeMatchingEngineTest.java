@@ -16,12 +16,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
 /**
- * Scenarios are transcribed from {@code docs/phases/phase-02-scenarios.md}, which was
- * worked out by hand before the engine existed.
+ * Scenarios transcribed from {@code docs/phases/phase-02-scenarios.md}, worked out by hand
+ * before the engine existed.
  *
- * <p>Every test finishes with {@link #assertBookNotCrossed()}. A book whose best bid meets
- * or exceeds its best ask holds two orders that should have traded and did not, so that
- * single check catches a broad class of matching bugs.
+ * <p>Every test finishes with {@link #assertBookNotCrossed()}: a crossed book holds two orders
+ * that should have traded and did not, so that one check catches a broad class of bugs.
  */
 class PriceTimeMatchingEngineTest {
 
@@ -329,9 +328,8 @@ class PriceTimeMatchingEngineTest {
     // --- helpers ---
 
     /**
-     * Asserts the trades in order. Compares the four predictable components rather than
-     * whole {@link Trade} records, because the timestamp comes from the system clock and
-     * cannot be written into an expected value.
+     * Asserts the trades in order, comparing the four predictable components rather than whole
+     * {@link Trade} records, since the timestamp comes from the system clock.
      */
     private void assertTrades(List<Trade> trades, Tuple... expected) {
         assertThat(trades)

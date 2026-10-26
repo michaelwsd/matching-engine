@@ -5,15 +5,14 @@ import com.mwang.model.Order;
 import java.util.Objects;
 
 /**
- * One instruction travelling through the gateway's queue to the matcher thread.
+ * One instruction travelling through the gateway's queue to the matcher thread. Everything a
+ * caller wants done is queued, so the book stays confined and the queue decides arrival order.
  *
- * <p>Everything a caller wants done is queued as one of these, so the book stays confined to
- * the matcher thread and the queue stays the one place arrival order is decided. Queueing a
- * cancel also removes a race for free: the queue is FIFO, so a {@link Cancel} enqueued after
- * its {@link Submit} is always applied after it.
+ * <p>The queue being FIFO removes a race for free: a {@link Cancel} enqueued after its
+ * {@link Submit} is always applied after it.
  *
- * <p>Sealed, so the matcher's {@code switch} is exhaustive and a fourth command will not
- * compile until it is handled. Package-private: callers see only {@link OrderGateway}.
+ * <p>Sealed, so the matcher's {@code switch} is exhaustive and a fourth command will not compile
+ * until it is handled.
  */
 sealed interface Command {
 
@@ -28,15 +27,11 @@ sealed interface Command {
     }
 
     /**
-     * Take this order off the book. An order that already filled is not an error here - see
+     * Take this order off the book. An order that already filled is not an error here; see
      * {@link OrderGateway#cancelsMissed()}.
      */
     record Cancel(long orderId) implements Command { }
 
-    /**
-     * Stop the matcher. Queued rather than signalled with a flag, so it sits behind every
-     * command already accepted and nothing acknowledged is lost. A real case where a sentinel
-     * {@code Order} with magic field values used to be - this one the compiler checks.
-     */
+    /** Stop the matcher, behind every command already accepted, so nothing accepted is lost. */
     record Shutdown() implements Command { }
 }

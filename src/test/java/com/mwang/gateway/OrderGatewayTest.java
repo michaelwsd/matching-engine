@@ -183,9 +183,8 @@ class OrderGatewayTest {
     }
 
     /**
-     * The listener is caller-supplied and runs on the matcher thread, so an exception from it
-     * would otherwise propagate out of the match loop and kill the matcher - silently, since
-     * nothing joins that thread until shutdown. Every subsequent order would queue up forever.
+     * The listener runs on the matcher thread, so an exception from it would kill the matcher
+     * silently and queue every subsequent order forever.
      */
     @Test
     void shouldSurviveAListenerThatThrows() throws Exception {
@@ -221,9 +220,8 @@ class OrderGatewayTest {
     // --- run counters ---
 
     /**
-     * The counters are the only record of a run's size once the process is gone, since they
-     * feed the summary line shutdown logs. Asserting after {@code shutdown()} needs no latch:
-     * shutdown drains the queue before returning, so the totals are final by then.
+     * The counters feed the summary line shutdown logs. Asserting after {@code shutdown()} needs
+     * no latch, since shutdown drains the queue before returning.
      */
     @Test
     void shouldCountEveryOrderItProcesses() throws Exception {
@@ -284,20 +282,12 @@ class OrderGatewayTest {
     // --- shutdown under the worst case ---
 
     /**
-     * Shutdown must return even when the matcher will never come back <em>and</em> the queue
-     * has no room for the shutdown command.
+     * Shutdown must return even when the matcher will never come back and the queue has no room
+     * for the shutdown command. A blocking {@code put} would wait for a slot only the wedged
+     * matcher could free, never reaching the {@code join} meant to bound shutdown.
      *
-     * <p>A blocking {@code put} of the pill would wait for a slot only the wedged matcher
-     * could free, so it would wait forever - and the {@code join} that is meant to bound the
-     * whole shutdown sits after it and would never be reached. The failure mode is a hang with
-     * no log line explaining it.
-     *
-     * <p>Deliberately the slowest test in the suite: it spends the real {@code offer} timeout,
-     * because the timeout elapsing is the thing being asserted. The annotation runs the body on
-     * its own thread so that a regression fails the test rather than hanging the build.
-     *
-     * <p>Emits an expected ERROR about the pill and an {@code IllegalStateException} from the
-     * wedged engine. Both are the test working.
+     * <p>Deliberately the slowest test in the suite: the timeout elapsing is what is asserted.
+     * The expected ERROR and {@code IllegalStateException} are the test working.
      */
     @Test
     @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
@@ -337,9 +327,8 @@ class OrderGatewayTest {
     // --- cancel ---
 
     /**
-     * The point of the whole Command refactor: a cancel reaches a <em>resting</em> order. The
-     * flag-on-a-queued-order approach could only ever have reached orders still in the queue,
-     * which is the fraction of their life when cancelling does not matter.
+     * The point of the Command refactor: a cancel reaches a resting order, not just one still in
+     * the queue, which is the fraction of its life when cancelling does not matter.
      */
     @Test
     void shouldCancelAnOrderThatIsRestingOnTheBook() throws Exception {
@@ -358,9 +347,8 @@ class OrderGatewayTest {
     }
 
     /**
-     * Queueing the cancel is what removes the race. The queue is FIFO, so a cancel enqueued
-     * after its submit is always applied after it - there is no window where the order is
-     * neither queued nor resting, and therefore no cancel that silently does nothing.
+     * Queueing the cancel is what removes the race: the queue is FIFO, so there is no window
+     * where the order is neither queued nor resting.
      */
     @Test
     void shouldApplyACancelAfterTheSubmitItFollowsEvenWhenBothAreQueuedAtOnce() throws Exception {
@@ -404,9 +392,8 @@ class OrderGatewayTest {
     }
 
     /**
-     * {@code MatchingEngine} stays a functional interface, so {@code cancel} is a default that
-     * throws. A lambda engine holds no book and genuinely cannot cancel; failing loudly is
-     * better than a cancel that quietly does nothing.
+     * {@code cancel} is a default that throws, because a lambda engine holds no book. Failing
+     * loudly beats a cancel that quietly does nothing.
      */
     @Test
     void shouldFailLoudlyWhenTheEngineCannotCancel() {
@@ -437,9 +424,8 @@ class OrderGatewayTest {
     }
 
     /**
-     * Wrapping the order in a Command moved where a null fails. Without the check in
-     * {@code Command.Submit}, a null would travel the queue and blow up on the matcher thread,
-     * with nothing left in the stack trace to say who queued it.
+     * Without the check in {@code Command.Submit}, a null would travel the queue and fail on the
+     * matcher thread, with nothing in the stack trace to say who queued it.
      */
     @Test
     void shouldRejectANullOrderAtTheCallSite() {
@@ -453,9 +439,8 @@ class OrderGatewayTest {
     // --- fixtures ---
 
     /**
-     * Submits until the submitting thread parks inside {@code put()}, whichever capacity the
-     * gateway happens to use. Hardcoding 1000 here would silently stop filling the queue the
-     * day that constant changed.
+     * Submits until the thread parks inside {@code put()}, whatever the capacity. Hardcoding
+     * 1000 would silently stop filling the queue the day that constant changed.
      */
     private Thread fillQueue() throws InterruptedException {
         Thread filler = new Thread(() -> {

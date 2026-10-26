@@ -58,9 +58,8 @@ class MidPriceWalkTest {
     // --- reproducibility ---
 
     /**
-     * The property the whole test suite rests on: a seeded walk is deterministic. Without
-     * this, every assertion below could only ever be about ranges, never about values, and a
-     * failing simulation run could not be replayed.
+     * The property the rest of this suite rests on: a seeded walk is deterministic. Without it,
+     * every assertion below could only be about ranges, and a failing run could not be replayed.
      */
     @Test
     void shouldProduceTheSameSequenceForTheSameSeed() {
@@ -87,9 +86,8 @@ class MidPriceWalkTest {
     }
 
     /**
-     * Stated separately from the bounds check even though it follows from it, because this is
-     * the consequence that matters downstream: {@code Order} rejects a limit order priced at
-     * or below zero, and that failure would surface far away from this class.
+     * Stated separately from the bounds check because this is the consequence downstream:
+     * {@code Order} rejects a non-positive price, and that would surface far from here.
      */
     @Test
     void shouldNeverProduceANonPositivePrice() {
@@ -98,9 +96,8 @@ class MidPriceWalkTest {
     }
 
     /**
-     * A walk that returns the reference price forever satisfies every bounds assertion above
-     * perfectly. This is the test that fails if {@code next()} computes a step and then
-     * forgets to apply it.
+     * A walk stuck at the reference price satisfies every bounds assertion above. This is the
+     * test that fails if {@code next()} computes a step and forgets to apply it.
      */
     @Test
     void shouldActuallyMove() {
@@ -122,13 +119,11 @@ class MidPriceWalkTest {
     }
 
     /**
-     * Pins the {@code stepSize + 1} in the call to {@code nextLong(origin, bound)}. Because
-     * that interval excludes its upper end, dropping the {@code + 1} makes the largest upward
-     * step one tick smaller than the largest downward step, so the walk drifts quietly
-     * downwards forever. Every other test in this class still passes when that happens.
+     * Pins the {@code stepSize + 1} in {@code nextLong(origin, bound)}, whose upper end is
+     * exclusive. Dropping it makes the walk drift quietly downwards forever, and no other test
+     * here notices.
      *
-     * <p>The bounds here are deliberately far wider than the walk can travel in this many
-     * ticks, so nothing is ever clamped and every observed move is a raw draw.
+     * <p>The bounds are far wider than the walk can travel, so every observed move is a raw draw.
      */
     @Test
     void shouldDrawStepsSymmetricallyAcrossTheWholeRange() {

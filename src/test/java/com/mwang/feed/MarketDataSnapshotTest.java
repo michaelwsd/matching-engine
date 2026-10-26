@@ -83,9 +83,8 @@ class MarketDataSnapshotTest {
     // --- the record's own contract ---
 
     /**
-     * Tests the canonical constructor directly rather than going through {@code from}, which
-     * only ever passes lists that are already unmodifiable. Routing through the safe path
-     * would prove nothing about the record's own guarantee.
+     * Tests the canonical constructor directly. {@code from} only ever passes unmodifiable
+     * lists, so routing through it would prove nothing about the record's own guarantee.
      */
     @Test
     void shouldCopyTheListsItIsGivenRatherThanHoldTheCallersReferences() {

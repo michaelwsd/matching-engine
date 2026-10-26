@@ -19,19 +19,15 @@ import java.util.concurrent.Executors;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Proves that putting concurrent order intake in front of the engine has not changed what
- * the engine does.
+ * Proves that putting concurrent order intake in front of the engine has not changed what the
+ * engine does.
  *
- * <p>The obvious test - compare the concurrent run's trades against a sequential run's -
- * cannot work. Producer threads reach the queue in an order that varies between runs, and
- * a different arrival order legitimately produces different trades under price-time
- * priority. Asserting equality there yields a test that fails at random.
+ * <p>Comparing a concurrent run against a sequential one cannot work: arrival order varies
+ * between runs, and a different arrival order legitimately produces different trades.
  *
- * <p>So the scenario is constructed so that the outcome <em>cannot</em> vary: every order
- * is the same price and size, and no two share an account. Whatever order they arrive in,
- * each one either rests or fully matches exactly one resting order, self-trade prevention
- * never fires, and no order is ever partially filled. The trade count, the filled
- * quantity and the final book state are then fixed by the scenario rather than by timing.
+ * <p>So the scenario is built so the outcome cannot vary. Every order is the same price and
+ * size and no two share an account, so each one either rests or fully matches exactly one
+ * resting order. The trade count, filled quantity and final book are fixed by the scenario.
  */
 class DeterminismTest {
 
@@ -64,10 +60,8 @@ class DeterminismTest {
     }
 
     /**
-     * Conservation holds under any interleaving, so this is the assertion that would
-     * survive a messier scenario: every trade reduces exactly two orders by its quantity,
-     * so the total filled across all orders must be twice the traded volume. A unit that
-     * went missing, or was filled twice, breaks this.
+     * Conservation holds under any interleaving, so this assertion would survive a messier
+     * scenario: the total filled must be twice the traded volume.
      */
     @Test
     void shouldNeitherLoseNorInventQuantity() throws Exception {
@@ -136,11 +130,9 @@ class DeterminismTest {
     // --- scenario ---
 
     /**
-     * Equal buys and sells, all at one price, all the same size, every account distinct.
-     * Shuffled with a fixed seed so the sequential baseline is reproducible.
-     *
-     * <p>A fresh list every call: {@link Order} is mutable, and reusing orders across runs
-     * would start the second run with already-filled quantities.
+     * Equal buys and sells, one price, one size, every account distinct, shuffled with a fixed
+     * seed. A fresh list every call, since {@link Order} is mutable and reusing them would start
+     * the next run with already-filled quantities.
      */
     private List<Order> buildOrders() {
         List<Order> orders = new ArrayList<>(PAIRS * 2);

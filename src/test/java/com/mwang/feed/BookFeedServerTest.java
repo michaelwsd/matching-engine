@@ -105,9 +105,8 @@ class BookFeedServerTest {
     }
 
     /**
-     * An exception escaping a handler closes the connection with no status, so the client sees
-     * a truncated response rather than an error. The handler must absorb it - and must keep
-     * serving afterwards, exactly as the matcher survives a listener that throws.
+     * An exception escaping a handler closes the connection with no status, so the client sees a
+     * truncated response. The handler must absorb it and keep serving.
      */
     @Test
     void shouldReturn500AndKeepServingWhenTheSupplierThrows() throws Exception {

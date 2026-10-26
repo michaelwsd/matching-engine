@@ -3,18 +3,11 @@ package com.mwang.model;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Issues unique order ids to everything that submits to one book.
+ * Issues unique order ids to everything that submits to one book. A book rejects a duplicate id
+ * while the first order still rests, so every participant sharing a book must draw from here.
  *
- * <p>A book rejects a duplicate id while the first order still rests, so every participant
- * sharing a book must draw from the same sequence. Handing them one allocator makes a collision
- * impossible; giving each its own base and hoping the ranges never meet makes it merely
- * unlikely, and the failure arrives mid-run as an
- * {@link com.mwang.exception.InvalidOrderException}.
- *
- * <p>Thread-safe, and genuinely needs to be: a market-data generator on the producer thread and
- * a strategy on its own thread call {@link #next()} concurrently. This is the case an
- * {@link AtomicLong} exists for - two writers doing read-modify-write, where {@code volatile}
- * would lose ids to interleaving.
+ * <p>Thread-safe, and genuinely needs to be: the generator and a strategy call {@link #next()}
+ * from different threads, which is the read-modify-write case {@link AtomicLong} exists for.
  */
 public final class OrderIdAllocator {
 

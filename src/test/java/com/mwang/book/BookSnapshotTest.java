@@ -9,12 +9,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Tests the record's own contract rather than going through {@link OrderBook}.
- *
- * <p>That distinction matters here. {@code OrderBook.bidDepth} already returns an immutable
- * list, so a snapshot built through the book is safe whether or not the record copies anything.
- * The record is public, so the guarantee has to hold for any caller - including one that passes
- * an {@link ArrayList} it then keeps modifying.
+ * Tests the record's own contract rather than going through {@link OrderBook}, whose depth lists
+ * are already immutable. The record is public, so its guarantee must hold for any caller,
+ * including one passing an {@link ArrayList} it then keeps modifying.
  */
 class BookSnapshotTest {
 

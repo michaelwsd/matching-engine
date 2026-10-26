@@ -8,9 +8,8 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Time priority is a property of {@link PriceLevel} rather than of {@link OrderBook}, and
- * the book exposes no way to observe the queue order until matching arrives in Phase 2.
- * These tests check it directly, which is possible because the test shares the package.
+ * Time priority belongs to {@link PriceLevel}, and {@link OrderBook} exposes no way to observe
+ * queue order. These tests check it directly, sharing the package to reach it.
  */
 class PriceLevelTest {
 

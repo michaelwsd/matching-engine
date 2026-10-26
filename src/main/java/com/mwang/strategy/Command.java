@@ -7,12 +7,9 @@ import java.util.Objects;
 /**
  * One instruction travelling through the strategy's queue to its own thread.
  *
- * <p>Sealed, so the runner's {@code switch} is exhaustive and a third instruction will not
- * compile until it is handled. {@link Shutdown} being a real case matters more here than
- * anywhere: a sentinel {@code Trade} reaching the strategy would be booked as a genuine
- * execution and corrupt its position, silently and permanently.
- *
- * <p>Package-private: callers use {@link StrategyRunner#onMatch} and {@link StrategyRunner#stop}.
+ * <p>Sealed, so the runner's {@code switch} is exhaustive and a fourth instruction will not
+ * compile until it is handled. A typed {@link Shutdown} matters more here than anywhere: a
+ * sentinel {@code Trade} would be booked as a real execution and corrupt the position.
  */
 sealed interface Command {
 
@@ -25,9 +22,9 @@ sealed interface Command {
         }
     }
 
-    /**
-     * Stop the strategy thread. Queued rather than signalled with a flag, so the fills already
-     * accepted are delivered first - they are owed to the strategy's position.
-     */
+    /** Replace the quotes. Carries no data: the strategy quotes around the current book. */
+    record Requote() implements Command { }
+
+    /** Stop the strategy thread, behind every fill already accepted. */
     record Shutdown() implements Command { }
 }

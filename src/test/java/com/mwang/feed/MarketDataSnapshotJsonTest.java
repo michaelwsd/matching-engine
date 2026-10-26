@@ -14,10 +14,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Pins the wire format. Separate from {@link MarketDataSnapshotTest}, which covers the
  * conversion rather than the serialisation.
  *
- * <p>One test compares the whole JSON string. That is deliberately brittle: this JSON is a
- * public contract, so a change to it should break the build and force a decision rather than
- * slip out to consumers. The others assert single properties, because a one-line failure is
- * easier to read than a diff of a 200-character string.
+ * <p>One test compares the whole JSON string, deliberately brittle: this format is a public
+ * contract, so a change should break the build rather than reach consumers. The rest assert
+ * single properties, since a one-line failure reads better than a long diff.
  */
 class MarketDataSnapshotJsonTest {
 
@@ -28,10 +27,8 @@ class MarketDataSnapshotJsonTest {
     private static final long TIMESTAMP = 1_700_000_000_000L;
 
     /**
-     * The canonical shape, start to finish.
-     *
-     * <p>Two bid levels and one ask, deliberately: a symmetric fixture would serialise
-     * identically if bids and asks were ever swapped.
+     * The canonical shape, start to finish. Two bid levels and one ask, since a symmetric
+     * fixture would serialise identically if bids and asks were swapped.
      */
     @Test
     void shouldSerialiseAPopulatedBookToTheAgreedShape() throws Exception {
@@ -94,9 +91,8 @@ class MarketDataSnapshotJsonTest {
     }
 
     /**
-     * Prices are scaled integers, exactly as they are in memory. Emitting {@code 99.98} would
-     * hand every consumer a binary float that cannot represent the value exactly - the reason
-     * prices are longs in the first place - and a string would make them parse it back.
+     * Prices are scaled integers, exactly as in memory. Emitting {@code 99.98} would hand every
+     * consumer a binary float that cannot represent the value exactly.
      */
     @Test
     void shouldEmitPricesAsIntegersRatherThanDecimalsOrStrings() throws Exception {
@@ -111,9 +107,8 @@ class MarketDataSnapshotJsonTest {
     }
 
     /**
-     * A negative test, recording a decision. Both are derivable from the two best prices, and a
-     * derived field on the wire is one that can contradict the fields it came from. The mid is
-     * worse still: it falls on a half tick and could not be an integer.
+     * A negative test, recording a decision. Both are derivable from the best prices, and a
+     * derived field on the wire can contradict its source. The mid also falls on a half tick.
      */
     @Test
     void shouldNotSendDerivedValues() throws Exception {
