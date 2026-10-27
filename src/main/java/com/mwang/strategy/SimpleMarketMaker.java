@@ -56,6 +56,12 @@ public final class SimpleMarketMaker implements Strategy {
      */
     private final Set<Long> myQuotes = new HashSet<>();
 
+    /**
+     * Ticks where {@link #maxPosition} kept a side off the book, for the end-of-run summary.
+     * Plain, like {@link Position}: only safe to read once the strategy thread has stopped.
+     */
+    private long sidesWithheld;
+
     /** The two quotes to cancel on the next tick, or {@link #NO_QUOTE}. */
     private long bidId = NO_QUOTE;
     private long askId = NO_QUOTE;
@@ -153,9 +159,13 @@ public final class SimpleMarketMaker implements Strategy {
         // Signed, so one comparison a side covers long and short without branching on which.
         if (held < maxPosition) {
             bidId = post(Side.BUY, quoteMid - halfSpread);
+        } else {
+            sidesWithheld++;
         }
         if (held > -maxPosition) {
             askId = post(Side.SELL, quoteMid + halfSpread);
+        } else {
+            sidesWithheld++;
         }
     }
 
@@ -211,6 +221,14 @@ public final class SimpleMarketMaker implements Strategy {
         if (orderId != NO_QUOTE) {
             gateway.cancel(orderId);
         }
+    }
+
+    /**
+     * @return how many times the position limit withheld a side. At most one a tick, since
+     *         both sides cannot be at the limit at once.
+     */
+    public long sidesWithheld() {
+        return sidesWithheld;
     }
 
     /** @return this strategy's position, for the end-of-run summary */

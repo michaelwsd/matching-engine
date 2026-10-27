@@ -322,6 +322,22 @@ class SimpleMarketMakerTest {
         assertThat(gateway.cancelsMissed()).isZero();
     }
 
+    /** Counted for the summary, so the limit shows up as a number and not only as behaviour. */
+    @Test
+    @Timeout(5)
+    void shouldCountEverySideTheLimitWithholds() throws Exception {
+        maker.onRequote();
+        assertThat(maker.sidesWithheld()).as("nothing withheld while flat").isZero();
+
+        buy(QUOTE_SIZE);
+        buy(QUOTE_SIZE);
+        maker.onRequote();
+        maker.onRequote();
+        gateway.shutdown();
+
+        assertThat(maker.sidesWithheld()).as("one side, on each of two ticks").isEqualTo(2);
+    }
+
     // --- telling its own fills from everyone else's ---
 
     /** The first id drawn is the bid, the second the ask. */
