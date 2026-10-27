@@ -125,6 +125,7 @@ public final class StrategyRunner implements MatchListener {
     private void deliver(Command command) {
         try {
             switch (command) {
+                // notify a fill
                 case Command.Fill(Trade fill) -> {
                     strategy.onFill(fill);
                     // Counted after the call returns, so a throw is not counted as delivered.
