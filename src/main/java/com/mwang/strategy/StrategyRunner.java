@@ -44,6 +44,7 @@ public final class StrategyRunner implements MatchListener {
     private final AtomicLong delivered = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
     private final AtomicLong requotesSkipped = new AtomicLong();
+    private final AtomicLong failed = new AtomicLong();
 
     private Thread worker;
     private volatile boolean running;
@@ -138,6 +139,9 @@ public final class StrategyRunner implements MatchListener {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("strategy interrupted", e);
         } catch (RuntimeException e) {
+            // Counted as well as logged: a strategy failing every call is otherwise invisible
+            // to a caller, which cannot tell it apart from one that simply did nothing.
+            failed.incrementAndGet();
             // A record's toString names the command, so this needs no per-case message.
             logger.error("Strategy failed on {}", command, e);
         }
@@ -188,5 +192,10 @@ public final class StrategyRunner implements MatchListener {
     /** @return requote ticks dropped because the strategy was behind. Not a fault. */
     public long requotesSkipped() {
         return requotesSkipped.get();
+    }
+
+    /** @return calls the strategy threw out of. Any failure is a fault; the log says why. */
+    public long failures() {
+        return failed.get();
     }
 }

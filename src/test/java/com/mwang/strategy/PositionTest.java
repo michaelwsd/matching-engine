@@ -169,6 +169,46 @@ class PositionTest {
         assertThat(position.averagePrice()).isEqualTo(9_997);
     }
 
+    // --- publishing a copy ---
+
+    @Test
+    void shouldCopyEveryFigure() {
+        position.onFill(Side.BUY, 100, 9_998);
+        position.onFill(Side.SELL, 40, 10_002);
+
+        Position copy = position.copy();
+
+        assertThat(copy.quantity()).isEqualTo(position.quantity());
+        assertThat(copy.costBasis()).isEqualTo(position.costBasis());
+        assertThat(copy.realised()).isEqualTo(position.realised());
+        assertThat(copy.averagePrice()).isEqualTo(position.averagePrice());
+        assertThat(copy.total(10_000)).isEqualTo(position.total(10_000));
+    }
+
+    /** The point of the copy: it is published to another thread, which must see a still frame. */
+    @Test
+    void shouldNotFollowLaterFillsOnTheOriginal() {
+        position.onFill(Side.BUY, 100, 9_998);
+        Position copy = position.copy();
+
+        position.onFill(Side.BUY, 100, 10_050);
+
+        assertThat(copy.quantity()).as("the copy is frozen at the moment it was taken")
+                .isEqualTo(100);
+        assertThat(copy.costBasis()).isEqualTo(999_800);
+        assertThat(position.quantity()).as("and the original keeps moving").isEqualTo(200);
+    }
+
+    @Test
+    void shouldCopyAFlatPosition() {
+        Position copy = position.copy();
+
+        assertThat(copy.quantity()).isZero();
+        assertThat(copy.costBasis()).isZero();
+        assertThat(copy.realised()).isZero();
+        assertThat(copy.averagePrice()).isEqualTo(OrderBook.NO_PRICE);
+    }
+
     // --- rejections ---
 
     @Test

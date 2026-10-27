@@ -1,6 +1,7 @@
 package com.mwang.strategy;
 
 import com.mwang.book.BookSnapshot;
+import com.mwang.book.OrderBook;
 import com.mwang.gateway.OrderGateway;
 import com.mwang.model.Order;
 import com.mwang.model.OrderIdAllocator;
@@ -11,6 +12,7 @@ import com.mwang.model.Trade;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
@@ -19,7 +21,8 @@ import java.util.function.Supplier;
  * position reaches {@link #maxPosition}.
  *
  * <p>Confined to the strategy thread, like everything {@link StrategyRunner} calls, so none
- * of its state is synchronised.
+ * of its state is synchronised. {@link #status()} is the one exception: an immutable snapshot
+ * republished on every change, so a display thread can read it without a lock.
  */
 public final class SimpleMarketMaker implements Strategy {
 
@@ -62,9 +65,29 @@ public final class SimpleMarketMaker implements Strategy {
      */
     private long sidesWithheld;
 
+    /** Quotes submitted, so the summary can separate them from the surrounding flow. */
+    private long quotesPosted;
+
+    /**
+     * Trades that were this strategy's own. {@link #onFill} sees every trade on the book, so
+     * the ratio of the two is how competitive these quotes are.
+     */
+    private long ownFills;
+
+    /** Quantity filled each way, so the position can be checked against the raw tally. */
+    private long boughtLots;
+    private long soldLots;
+
     /** The two quotes to cancel on the next tick, or {@link #NO_QUOTE}. */
     private long bidId = NO_QUOTE;
     private long askId = NO_QUOTE;
+
+    /** What those quotes are priced at, or {@link OrderBook#NO_PRICE} when a side is withheld. */
+    private long bidPrice = OrderBook.NO_PRICE;
+    private long askPrice = OrderBook.NO_PRICE;
+
+    /** The snapshot {@link #status()} hands out. Written here, read from any thread. */
+    private final AtomicReference<StrategyStatus> status;
 
     /**
      * @param gateway      where quotes are submitted and cancelled
@@ -120,6 +143,7 @@ public final class SimpleMarketMaker implements Strategy {
         this.referenceMid = referenceMid;
         this.maxPosition = maxPosition;
         this.maxSkew = maxSkew;
+        this.status = new AtomicReference<>(StrategyStatus.flat(quoteSize));
     }
 
     /**
@@ -131,11 +155,17 @@ public final class SimpleMarketMaker implements Strategy {
         // bid quote got filled
         if (myQuotes.contains(trade.buyOrderId())) {
             position.onFill(Side.BUY, trade.quantity(), trade.price());
+            ownFills++;
+            boughtLots += trade.quantity();
+            publish();
         }
 
         // ask quote got filled
         else if (myQuotes.contains(trade.sellOrderId())) {
             position.onFill(Side.SELL, trade.quantity(), trade.price());
+            ownFills++;
+            soldLots += trade.quantity();
+            publish();
         }
     }
 
@@ -151,6 +181,8 @@ public final class SimpleMarketMaker implements Strategy {
         cancel(askId);
         bidId = NO_QUOTE;
         askId = NO_QUOTE;
+        bidPrice = OrderBook.NO_PRICE;
+        askPrice = OrderBook.NO_PRICE;
 
         long held = position.quantity();
         // skew the quotes based on our current position (less flat = more skew)
@@ -158,15 +190,25 @@ public final class SimpleMarketMaker implements Strategy {
 
         // Signed, so one comparison a side covers long and short without branching on which.
         if (held < maxPosition) {
-            bidId = post(Side.BUY, quoteMid - halfSpread);
+            bidPrice = quoteMid - halfSpread;
+            bidId = post(Side.BUY, bidPrice);
         } else {
             sidesWithheld++;
         }
         if (held > -maxPosition) {
-            askId = post(Side.SELL, quoteMid + halfSpread);
+            askPrice = quoteMid + halfSpread;
+            askId = post(Side.SELL, askPrice);
         } else {
             sidesWithheld++;
         }
+
+        publish();
+    }
+
+    /** Republishes {@link #status()}. Called after anything a reader would want to see. */
+    private void publish() {
+        status.set(new StrategyStatus(position, bidPrice, askPrice, quoteSize, sidesWithheld,
+                quotesPosted, new StrategyStatus.Fills(ownFills, boughtLots, soldLots)));
     }
 
     /**
@@ -174,13 +216,10 @@ public final class SimpleMarketMaker implements Strategy {
      * frequently no real mid; {@link #referenceMid} stands in until there is.
      */
     private long currentMid() {
-        BookSnapshot snapshot = book.get();
-        if (snapshot.hasBothSides()) {
-            // Truncates, so an odd spread puts the mid on the bid. Half a tick, documented
-            // rather than corrected: a quoting bias this small is dwarfed by the spread.
-            return snapshot.bestBid() + (snapshot.bestAsk() - snapshot.bestBid()) / 2;
-        }
-        return referenceMid;
+        // Truncated, so an odd spread puts the mid on the bid. Half a tick, documented rather
+        // than corrected: a quoting bias this small is dwarfed by the spread.
+        long mid = book.get().mid();
+        return mid == OrderBook.NO_PRICE ? referenceMid : mid;
     }
 
     /**
@@ -210,6 +249,7 @@ public final class SimpleMarketMaker implements Strategy {
         // Registered before submitting, so an order is never on the book unrecorded.
         myQuotes.add(newQuote.getOrderId());
         gateway.submit(newQuote);
+        quotesPosted++;
         return newQuote.getOrderId();
     }
 
@@ -234,5 +274,13 @@ public final class SimpleMarketMaker implements Strategy {
     /** @return this strategy's position, for the end-of-run summary */
     public Position position() {
         return position;
+    }
+
+    /**
+     * @return an immutable view of the position and the live quotes, safe to read from any
+     *         thread while the strategy runs. Republished on every fill and every requote.
+     */
+    public StrategyStatus status() {
+        return status.get();
     }
 }

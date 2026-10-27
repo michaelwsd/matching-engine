@@ -24,4 +24,13 @@ public record BookSnapshot(List<DepthLevel> bids, List<DepthLevel> asks,
     public boolean hasBothSides() {
         return bestBid != OrderBook.NO_PRICE && bestAsk != OrderBook.NO_PRICE;
     }
+
+    /**
+     * @return the midpoint of the spread, or {@link OrderBook#NO_PRICE} when either side is
+     *         empty. Truncates, so an odd spread puts the mid on the bid. Written as an offset
+     *         from the bid rather than {@code (bestBid + bestAsk) / 2}, which can overflow.
+     */
+    public long mid() {
+        return hasBothSides() ? bestBid + (bestAsk - bestBid) / 2 : OrderBook.NO_PRICE;
+    }
 }

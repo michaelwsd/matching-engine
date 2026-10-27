@@ -176,6 +176,26 @@ class StrategyRunnerTest {
         assertThat(bothSeen.await(2, TimeUnit.SECONDS))
                 .as("the second fill proves the thread survived the first throw")
                 .isTrue();
+        runner.stop();
+        assertThat(runner.failures())
+                .as("a strategy failing every call is invisible to a caller unless counted")
+                .isEqualTo(2);
+        assertThat(runner.delivered())
+                .as("a call that threw did not deliver anything")
+                .isZero();
+    }
+
+    @Test
+    void shouldCountNoFailuresWhenTheStrategyNeverThrows() {
+        RecordingStrategy strategy = new RecordingStrategy();
+        runner = new StrategyRunner(strategy);
+        runner.start();
+
+        runner.requote();
+        runner.onMatch(buy(1), List.of(trade(1, 1)));
+        runner.stop();
+
+        assertThat(runner.failures()).isZero();
     }
 
     // --- the requote side ---
@@ -213,6 +233,7 @@ class StrategyRunnerTest {
         assertThat(strategy.fills)
                 .as("a fill delivered after two throwing requotes proves the thread survived")
                 .hasSize(1);
+        assertThat(runner.failures()).as("both requotes threw").isEqualTo(2);
     }
 
     /**

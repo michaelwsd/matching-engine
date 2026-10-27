@@ -26,6 +26,23 @@ public final class Position {
 
     private long realised;
 
+    /** Starts flat. */
+    public Position() { }
+
+    private Position(long quantity, long costBasis, long realised) {
+        this.quantity = quantity;
+        this.costBasis = costBasis;
+        this.realised = realised;
+    }
+
+    /**
+     * @return an independent copy holding the same figures. Lets this position be published to
+     *         another thread without exposing the one the strategy keeps mutating.
+     */
+    public Position copy() {
+        return new Position(quantity, costBasis, realised);
+    }
+
     /**
      * Folds one of the strategy's own fills in, realising P&amp;L on whatever it closes.
      *

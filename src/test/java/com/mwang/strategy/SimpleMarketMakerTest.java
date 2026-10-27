@@ -409,6 +409,115 @@ class SimpleMarketMakerTest {
                 .isEqualTo(QUOTE_SIZE);
     }
 
+    // --- the published status ---
+
+    @Test
+    void shouldPublishAFlatStatusBeforeTheFirstRequote() {
+        StrategyStatus status = maker.status();
+
+        assertThat(status.bidPrice()).isEqualTo(OrderBook.NO_PRICE);
+        assertThat(status.askPrice()).isEqualTo(OrderBook.NO_PRICE);
+        assertThat(status.hasBothQuotes()).isFalse();
+        assertThat(status.position().quantity()).isZero();
+        assertThat(status.quoteSize()).isEqualTo(QUOTE_SIZE);
+        assertThat(status.quotesPosted()).isZero();
+        assertThat(status.fills().count()).isZero();
+    }
+
+    @Test
+    @Timeout(5)
+    void shouldPublishTheQuotesItJustPosted() throws Exception {
+        publish(9_990, 10_010);
+
+        maker.onRequote();
+
+        StrategyStatus status = maker.status();
+        assertThat(status.bidPrice()).isEqualTo(9_980);
+        assertThat(status.askPrice()).isEqualTo(10_020);
+        assertThat(status.hasBothQuotes()).isTrue();
+        assertThat(status.quotesPosted()).isEqualTo(2);
+    }
+
+    /** A withheld side has no price to report, or the display would show a quote that is gone. */
+    @Test
+    @Timeout(5)
+    void shouldPublishNoPriceForASideItWithheld() throws Exception {
+        maker.onRequote(); // posts the quotes the fills below land on
+        buy(QUOTE_SIZE);
+        buy(QUOTE_SIZE);
+
+        maker.onRequote();
+
+        StrategyStatus status = maker.status();
+        assertThat(status.bidPrice())
+                .as("long at the limit, so no bid")
+                .isEqualTo(OrderBook.NO_PRICE);
+        assertThat(status.askPrice()).as("fully skewed down onto the reference mid")
+                .isEqualTo(10_000);
+        assertThat(status.hasBothQuotes()).isFalse();
+        assertThat(status.sidesWithheld()).isEqualTo(1);
+        assertThat(status.quotesPosted()).as("two on the first tick, the ask alone on the second")
+                .isEqualTo(3);
+    }
+
+    @Test
+    @Timeout(5)
+    void shouldRepublishOnItsOwnFillWithoutWaitingForARequote() throws Exception {
+        maker.onRequote();
+
+        buy(30);
+
+        assertThat(maker.status().position().quantity()).isEqualTo(30);
+        assertThat(maker.status().fills().count()).isEqualTo(1);
+        assertThat(maker.status().fills().boughtLots()).isEqualTo(30);
+        assertThat(maker.status().fills().soldLots()).isZero();
+    }
+
+    /** The tally is what the end-to-end test reconciles the position against. */
+    @Test
+    @Timeout(5)
+    void shouldTallyFilledLotsOnEachSideSeparately() throws Exception {
+        maker.onRequote();
+
+        buy(40);
+        sell(15);
+
+        StrategyStatus.Fills fills = maker.status().fills();
+        assertThat(fills.count()).isEqualTo(2);
+        assertThat(fills.boughtLots()).isEqualTo(40);
+        assertThat(fills.soldLots()).isEqualTo(15);
+        assertThat(fills.netLots()).as("and the net must be the position Position worked out")
+                .isEqualTo(maker.status().position().quantity());
+    }
+
+    @Test
+    @Timeout(5)
+    void shouldNotCountOtherParticipantsTradesAsItsOwnFills() throws Exception {
+        maker.onRequote();
+
+        maker.onFill(new Trade(FOREIGN_ID, FOREIGN_ID + 1, 10_000, 30, 1L));
+
+        assertThat(maker.status().fills().count()).isZero();
+        assertThat(maker.status().position().quantity()).isZero();
+    }
+
+    /**
+     * The whole point of publishing a copy. A reader on another thread holds this record while
+     * the strategy keeps trading, and must not see the position change underneath it.
+     */
+    @Test
+    @Timeout(5)
+    void shouldPublishAStatusThatLaterFillsDoNotDisturb() throws Exception {
+        maker.onRequote();
+        buy(30);
+
+        StrategyStatus held = maker.status();
+        buy(20);
+
+        assertThat(held.position().quantity()).isEqualTo(30);
+        assertThat(maker.status().position().quantity()).isEqualTo(50);
+    }
+
     // --- construction ---
 
     @Test
