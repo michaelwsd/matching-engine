@@ -3,13 +3,14 @@
 A limit order book and matching engine in Java, built from scratch.
 
 A self-contained trading simulation: a price-time priority engine that crosses orders into
-trades, fed by synthetic market data through a concurrent gateway, with an audit trail on disk
-and a live market data feed over HTTP. Built in phases, each adding language and concurrency
-concepts on top of a working system - nothing is thrown away between phases.
+trades, fed by synthetic market data through a concurrent gateway, with a market maker quoting
+into the same book, an audit trail on disk and a live feed over HTTP. Built in phases, each
+adding language and concurrency concepts on top of a working system - nothing is thrown away
+between phases.
 
 ## Architecture
 
-Five threads today, six once Phase 5 is wired. One queue in, immutable values out.
+Six threads. One queue in, immutable values out.
 
 ```
   PRODUCER THREAD
@@ -19,25 +20,26 @@ Five threads today, six once Phase 5 is wired. One queue in, immutable values ou
   └────────────────────────────────────────┬────────────────────────────────────────┘
                                            │ submit()  blocks when full
   ╔════════════════════════════════════════▼════════════════════════════════════════╗
-  ║ BlockingQueue<Command>, capacity 1000                                           ║
-  ║ Phase 5 quotes rejoin here, as ordinary submits                                 ║
+  ║ BOUNDARY 1  BlockingQueue<Command>, capacity 1000                               ║
+  ║ strategy quotes rejoin here, as ordinary submits                                ║
   ╚════════════════════════════════════════╤════════════════════════════════════════╝
   MATCHER THREAD                           │ take()
   ┌────────────────────────────────────────▼────────────────────────────────────────┐
   │ OrderGateway.matchLoop                                                          │
   │   PriceTimeMatchingEngine                                                       │
   │     OrderBook          no locks, confined to this thread                        │
-  │   MatchListener.onMatch(order, trades)                                          │
+  │   MatchListener.onMatch   audit, then display, then strategy                    │
   └───────┬──────────────────────────┬───────────────────────────────┬──────────────┘
-          │                          │                               │
+          │                          │     REQUOTE THREAD, 100ms ────┤
+          │                          │     RequoteScheduler.tick     │
   ╔═══════▼════════╗ ╔═══════════════▼═══════════════╗ ╔═════════════▼══════════════╗
   ║ Queue<Trade>   ║ ║ AtomicReference<Status>       ║ ║ Queue<Command>             ║
-  ║ offer, drops   ║ ║ set(immutable BookSnapshot)   ║ ║ StrategyRunner, drops      ║
+  ║ offer, drops   ║ ║ set(immutable BookSnapshot)   ║ ║ Fill or Requote, drops     ║
   ╚═══════╤════════╝ ╚══════╤════════════════╤═══════╝ ╚═════════════╤══════════════╝
           │ take() / get()  │                │                       │
   ┌───────▼────────┐ ┌──────▼───────┐ ┌──────▼───────┐ ┌─────────────▼──────────────┐
-  │ TRADE-WRITER   │ │ MAIN THREAD  │ │ HTTP, virtual│ │ STRATEGY THREAD  not wired │
-  │ TradeLogger    │ │ live redraw  │ │ thread/req   │ │ Strategy.onFill -> Position│
+  │ TRADE-WRITER   │ │ MAIN THREAD  │ │ HTTP, virtual│ │ STRATEGY THREAD            │
+  │ TradeLogger    │ │ live redraw  │ │ thread/req   │ │ QuotingStrategy -> Position│
   │ logs/trades.csv│ │ 5 frames/sec │ │ :8080/book   │ │ quotes -> the gateway queue│
   └────────────────┘ └──────────────┘ └──────────────┘ └────────────────────────────┘
 ```
@@ -83,7 +85,7 @@ Needs a JDK 25. Maven is fetched by the wrapper.
 ./run.sh               # run the 20-second simulation
 ```
 
-The book redraws in place as orders arrive:
+The book redraws in place as orders arrive, with the maker's own position below it:
 
 ```
                LIVE ORDER BOOK
@@ -91,16 +93,27 @@ The book redraws in place as orders arrive:
            BIDS                   ASKS
        qty         price |     price      qty
   -----------------------+-------------------
-       217         98.54 |     98.61       19
-       207         98.53 |     98.67       95
-       149         98.52 |     98.73       75
-       200         98.50 |     98.94       26
-       235         98.49 |     98.95       21
+        57         99.94 |    100.02       50
+        45         99.92 |    100.03      344
+       101         99.91 |    100.04      489
+        92         99.89 |    100.05      210
+        38         99.87 |    100.06      222
   -----------------------+-------------------
-  best bid 98.54    best ask 98.61    spread 0.07
-  mid 98.575
-  elapsed 20s     orders    939     trades    690
+  best bid 99.94    best ask 100.02    spread 0.08
+  mid 99.98
+  -------------------------------------------
+                 MARKET MAKER
+  quoting bid   99.94   ask          100.02
+  position        -50   entry         99.97
+  realised     +3,870   unrealised      -50
+  total        +3,820   withheld          0
+      short [---------#+----------] long
+  elapsed 14s     orders    900     trades    424
 ```
+
+The bar is how much of the position limit is used, filling out towards the side being held.
+P&L is in ticks; prices are in dollars. A closing summary reports the same figures plus the
+order, trade and fill counts.
 
 In-place redraw needs a real terminal. Piped output and IntelliJ's plain run console ignore
 ANSI cursor codes, so there it prints a snapshot every two seconds instead. In IntelliJ, tick
@@ -136,10 +149,16 @@ taken, so a consumer can tell it missed something. Anything other than `GET /boo
 A healthy run's totals reconcile with each other and with the CSV:
 
 ```
-INFO [main] OrderFlowDriver - Order flow stopped after 920 orders
-INFO [main] OrderGateway    - Gateway stopped: 920 orders processed, 672 trades, 0 rejected, 0 cancelled, 0 cancels missed
-INFO [main] TradeLogger     - Trade log closed, 672 trades written to logs/trades.csv
+INFO [main] RequoteScheduler - Requote scheduler stopped: 193 ticks, 0 failed
+INFO [main] OrderFlowDriver  - Order flow stopped after 916 orders
+INFO [main] StrategyRunner   - Strategy stopped after 610 fills
+INFO [main] OrderGateway     - Gateway stopped: 1302 orders processed, 610 trades, 0 rejected, 345 cancelled, 39 cancels missed
+INFO [main] TradeLogger      - Trade log closed, 610 trades written to logs/trades.csv
 ```
+
+916 flow orders plus 386 maker quotes is the 1302 the matcher processed. `cancels missed` is
+expected, not a fault: a quote that filled before its cancel arrived is the asynchronous
+cancel working as designed.
 
 `-DLOG_LEVEL=DEBUG` logs every individual trade. See `logback.xml` for why that is not the
 default.
@@ -166,7 +185,8 @@ run.sh                      compile if needed, then run
 | `marketdata` | `MidPriceWalk`, `MarketDataGenerator`, `OrderFlowDriver` |
 | `audit` | `TradeLogger` |
 | `feed` | `MarketDataSnapshot`, `BookFeedServer` |
-| `strategy` | `Strategy`, `StrategyRunner` - the Phase 5 extension point |
+| `strategy` | `StrategyRunner`, `Position`, `RequoteScheduler`, two market makers |
+| `sim` | `SimulationRunner`, its config and result, `ConsoleRenderer` |
 
 ## Design notes
 
@@ -226,7 +246,7 @@ Decisions worth recording, with the reason rather than just the rule.
   or it could only reach orders still queued rather than the resting ones that actually need
   pulling - and a caller mutating a resting order directly would break the confinement every
   other decision here depends on. Being sealed makes the matcher's `switch` exhaustive, so a
-  fifth command is a compile error until it is handled. `Shutdown` as a real case also
+  fourth command is a compile error until it is handled. `Shutdown` as a real case also
   replaces a sentinel `Order` with magic field values. **All three queues** - order handoff,
   audit, strategy - use this same shape, each with its own package-private `Command`, so no
   fake domain object stands in for a control signal anywhere.
@@ -297,53 +317,36 @@ Decisions worth recording, with the reason rather than just the rule.
 
 ### Strategy and market making
 
-Two strategies ship. `SimpleMarketMaker` quotes a fixed half-spread either side of the book
-mid. `AdaptiveMarketMaker` sizes its half-spread from how much the mid has been moving.
-`StrategyFactory` chooses; `Main` runs the adaptive one.
+Two makers ship. `SimpleMarketMaker` quotes a fixed half-spread around the book mid;
+`AdaptiveMarketMaker` scales its half-spread to measured volatility. `StrategyFactory` chooses,
+and `Main` runs the adaptive one.
 
-The fixed-spread version is the more instructive of the two, because measuring *why* it loses
-money found a defect in the market rather than in the strategy.
+The fixed-spread one is the more instructive, because measuring *why* it lost money found a
+defect in the market rather than in the strategy.
 
-- **A market maker earns the spread and pays for inventory.** Both are visible in the summary:
-  `realised P&L` is spread captured on round trips, `unrealised P&L` is what the open position
-  is worth. A maker can be good at the first and still lose on the second.
-- **Adverse selection is not a tendency here, it is the only fill mechanism.** Measured over
-  five price paths, `SimpleMarketMaker` ended long every time the market fell and short every
-  time it rose. Its quotes rested *behind* the touch 89% of the time (measured: 137 of 154
-  orders), and a quote behind the touch can only be filled by the price travelling through it
-  - which is to say, by the market moving against it. `bought / sold` in the summary shows it
-  directly: 281 lots bought against 89 sold, in a falling market.
-- **The flow does demand liquidity, which is what makes market making possible at all.**
-  `MarketDataGenerator` prices each order at `mid + U` with `U` uniform over `±quoteOffset`
-  and **independent of the side**, so roughly half of all orders cross the spread for no
-  informational reason. Without that, no liquidity provider could ever profit; a book of
-  purely passive orders only trades when someone is picked off.
-- **The flow's aggregate spread is far tighter than its own `quoteOffset`.** Orders rest from
-  many different mids, so an offset of ±20 produces a book spread of 4-8 ticks, not 40. Any
-  half-spread above about 4 is therefore *outside* the market. This is the trap the
-  `halfSpread` comment in `SimulationConfig` used to get wrong.
-- **The binding constraint is fair-value uncertainty, not spread width.** Compared against the
-  walk's true mid, the book mid is unbiased but carries a standard deviation of ~14 ticks.
-  Removing the maker's own quotes from the estimate, weighting by depth, smoothing with an
-  EWMA, and estimating from trade prices instead were all measured: none beat ~15 ticks. Each
-  observation of the mid carries ±11.5 ticks of `U` noise, and the mid moves faster than there
-  is time to average it away. **You cannot quote a 7-tick spread around a 15-tick estimate.**
-- **So the original market was unplayable.** With `tickStep` at 5, the mid moved about half the
-  book's own spread *per order*. Over ten price paths the best strategy netted +302 ticks,
-  which is zero. The default is now 1 tick a step; raise it to watch the pathology return.
-  Real markets move a small fraction of a spread per trade, which is the whole reason a
-  resting quote is worth anything.
-- **`AdaptiveMarketMaker` sizes the spread from measured volatility**, which is what makes one
-  strategy work in both a quiet market and a fast one. It quotes at its widest until it has
-  measured a move - an unfilled quote costs nothing, while a quote narrower than an unknown
-  volatility is picked off - and its inventory skew scales with the current spread, so a full
-  position always shifts the quotes by the same proportion of their width.
-- **Its volatility proxy has a known limit.** It measures the movement of the *book mid*, which
-  is a smoothed series, so it understates the true uncertainty when the book is very stale. In
-  the pathological `tickStep 5` regime it is therefore worse than a fixed spread. Measured over
-  ten paths at `tickStep 1`: adaptive wins 9 and totals +11,381 ticks, against +4,746 for the
-  fixed spread - 2.4x, by trading four times the volume at a thinner but still positive edge.
-- **Both strategies estimate fair value from a book that contains their own quotes.** It does
-  not matter at these spreads, because the quotes sit behind the touch and symmetric quotes
-  leave the mid unchanged anyway. It would matter for a strategy quoting at the touch, which is
-  the natural next step.
+- **Spread is the income, inventory is the risk.** `realised P&L` is spread captured on round
+  trips; `unrealised P&L` is what the open position is worth. A maker can be good at the first
+  and still lose on the second.
+- **Adverse selection was its only fill mechanism.** Its quotes rested *behind* the touch on
+  137 of 154 orders, and a quote behind the touch can only fill when the price travels through
+  it - which is to say, when the market is moving against it. Over five price paths it ended
+  long every time the market fell and short every time it rose.
+- **The flow does demand liquidity**, which is what makes market making possible at all.
+  `MarketDataGenerator` prices each order at `mid + U`, with `U` uniform over
+  ±`quoteOffset` and **independent of the side**, so about half of all orders cross the spread
+  for no informational reason.
+- **Fair-value uncertainty was the binding constraint, not spread width.** Against the walk's
+  true mid, the book mid is unbiased but has a standard deviation of ~14 ticks. Four
+  alternatives were measured - own quotes removed, depth-weighted, EWMA-smoothed, and
+  estimated from trade prices - and none beat ~15. You cannot quote a 7-tick spread around a
+  15-tick estimate.
+- **So the market itself was unplayable.** With `tickStep` at 5 the mid moved about half the
+  book's own spread *per order*, and over ten price paths the best strategy netted +302 ticks,
+  which is zero. The default is 1 now; raise it to watch the pathology return.
+- **Scaling the spread to volatility is what lets one strategy work in both regimes.** It
+  quotes at its widest until it has measured a move - an unfilled quote costs nothing, while a
+  quote narrower than an unknown volatility is picked off - and its inventory skew scales with
+  the current spread. Over ten paths at `tickStep 1` it wins 9 and totals +11,381 ticks against
+  +4,746 for the fixed spread. Its one known limit: the proxy is the *book mid's* movement,
+  which understates true uncertainty when the book is very stale, so in the pathological regime
+  it does worse than a fixed spread.

@@ -20,6 +20,8 @@
   --lane-main:#eae9f1;
   --lane-writer:#e7eee8;
   --lane-http:#f0e9ec;
+  --lane-strategy:#e7ecf4;
+  --lane-requote:#f1ece3;
   --lane-edge:#cfc6b2;
   --boundary:#f2e3c8;
   --wire:#8d8470;
@@ -32,6 +34,7 @@
     --border:#3a3222; --success:#7bbd8a; --shadow:0 1px 3px rgba(0,0,0,.4);
     --lane-producer:#1b2327; --lane-matcher:#272013; --lane-main:#1f1d28;
     --lane-writer:#17231a; --lane-http:#261a1f;
+    --lane-strategy:#191f2a; --lane-requote:#231f17;
     --lane-edge:#3a3222; --boundary:#3a2d16; --wire:#897f68; --box:#201b12;
   }
 }
@@ -41,6 +44,7 @@
   --border:#3a3222; --success:#7bbd8a; --shadow:0 1px 3px rgba(0,0,0,.4);
   --lane-producer:#1b2327; --lane-matcher:#272013; --lane-main:#1f1d28;
     --lane-writer:#17231a; --lane-http:#261a1f;
+    --lane-strategy:#191f2a; --lane-requote:#231f17;
   --lane-edge:#3a3222; --boundary:#3a2d16; --wire:#897f68; --box:#201b12;
 }
 
@@ -150,8 +154,8 @@ footer a{color:var(--accent)}
 <header class="top">
   <p class="eyebrow">Limit order book &middot; Java</p>
   <h1>System Architecture</h1>
-  <p class="dek">How the pieces fit together: four named threads plus a virtual thread per HTTP
-  request, three boundaries between them, and one rule that explains nearly every design
+  <p class="dek">How the pieces fit together: six named threads plus a virtual thread per HTTP
+  request, four boundaries between them, and one rule that explains nearly every design
   decision - the order book is touched by exactly one thread, and nothing but immutable values
   ever crosses from it to another.</p>
 </header>
@@ -159,7 +163,7 @@ footer a{color:var(--accent)}
 <h2>The pipeline</h2>
 
 <div class="diagram">
-<svg id="pipe" viewBox="0 0 900 856" role="img"
+<svg id="pipe" viewBox="0 0 900 1104" role="img"
      aria-label="Pipeline diagram: a producer thread generates orders into a blocking queue; a matcher thread drains it into the matching engine and order book, then fans out to a trade queue and an atomic snapshot reference; a writer thread appends trades to CSV while the main thread renders and an HTTP server serves JSON.">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6"
@@ -239,71 +243,109 @@ footer a{color:var(--accent)}
   <path class="wire-dash" d="M272,444 L604,444 L604,392"/>
   <text x="312" y="438" class="wire-label">book.snapshot(5) - legal, same thread</text>
 
-  <!-- the listener fans out to two consumers, in order -->
-  <path class="wire" d="M160,468 L160,494"/>
-  <path class="wire" d="M160,481 L560,481 L560,494"/>
+  <!-- the listener fans out to three consumers, in order -->
+  <path class="wire" d="M160,468 L160,512"/>
+  <path class="wire" d="M160,486 L470,486 L470,512"/>
+  <path class="wire" d="M160,486 L780,486 L780,512"/>
+  <text x="176" y="480" class="wire-label">andThen(), in order</text>
 
-  <a class="node" href="#audit"><rect x="48" y="494" width="224" height="48" rx="7" class="svg-box"/>
-    <text x="160" y="516" text-anchor="middle" class="svg-t svg-mono">TradeLogger</text>
-    <text x="160" y="531" text-anchor="middle" class="svg-t-sm">onMatch(): queues trades</text></a>
+  <a class="node" href="#audit"><rect x="56" y="512" width="208" height="48" rx="7" class="svg-box"/>
+    <text x="160" y="534" text-anchor="middle" class="svg-t svg-mono">TradeLogger</text>
+    <text x="160" y="549" text-anchor="middle" class="svg-t-sm">queues trades</text></a>
 
-  <a class="node" href="#app"><rect x="448" y="494" width="224" height="48" rx="7" class="svg-box"/>
-    <text x="560" y="516" text-anchor="middle" class="svg-t svg-mono">publishSnapshot</text>
-    <text x="560" y="531" text-anchor="middle" class="svg-t-sm">lambda in Main</text></a>
-  <text x="688" y="512" class="wire-label">andThen(): both, in order</text>
-  <text x="688" y="528" class="wire-label">audit first, display second</text>
+  <a class="node" href="#app"><rect x="366" y="512" width="208" height="48" rx="7" class="svg-box"/>
+    <text x="470" y="534" text-anchor="middle" class="svg-t svg-mono">publishSnapshot</text>
+    <text x="470" y="549" text-anchor="middle" class="svg-t-sm">lambda in the runner</text></a>
 
-  <!-- boundaries 2 and 3, side by side -->
-  <path class="wire" d="M160,542 L160,600"/>
-  <text x="174" y="574" class="wire-label">offer(trade), never blocks</text>
-  <path class="wire" d="M560,542 L560,600"/>
-  <text x="574" y="574" class="wire-label">latest.set(snapshot)</text>
+  <a class="node" href="#strategy"><rect x="676" y="512" width="208" height="48" rx="7" class="svg-box"/>
+    <text x="780" y="534" text-anchor="middle" class="svg-t svg-mono">notifyStrategy</text>
+    <text x="780" y="549" text-anchor="middle" class="svg-t-sm">lambda, breaks the cycle</text></a>
 
-  <rect x="16" y="604" width="424" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
+  <!-- boundaries 2 and 3 side by side; 4 sits below, fed down the right margin -->
+  <path class="wire" d="M160,560 L160,604"/>
+  <text x="172" y="586" class="wire-label">offer(trade)</text>
+  <path class="wire" d="M470,560 L470,604"/>
+  <text x="482" y="586" class="wire-label">set(snapshot)</text>
+  <path class="wire" d="M780,560 L780,578 L858,578 L858,856"/>
+  <text x="612" y="574" class="wire-label">offer(fill)</text>
+
+  <rect x="16" y="604" width="400" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
   <text x="32" y="626" class="svg-lane-label">BOUNDARY 2 &#183; AUDIT</text>
   <text x="32" y="652" class="svg-t svg-mono">LinkedBlockingQueue&lt;Trade&gt;</text>
-  <text x="32" y="670" class="svg-t-sm">capacity 100,000 &#183; drops before stalling the matcher</text>
+  <text x="32" y="670" class="svg-t-sm">capacity 100,000 &#183; drops rather than stall the matcher</text>
 
-  <rect x="460" y="604" width="424" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
-  <text x="476" y="626" class="svg-lane-label">BOUNDARY 3 &#183; PUBLICATION</text>
-  <text x="476" y="652" class="svg-t svg-mono">AtomicReference&lt;Status&gt;</text>
-  <text x="476" y="670" class="svg-t-sm">immutable value &#183; the book itself never crosses</text>
+  <rect x="428" y="604" width="400" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
+  <text x="444" y="626" class="svg-lane-label">BOUNDARY 3 &#183; PUBLICATION</text>
+  <text x="444" y="652" class="svg-t svg-mono">AtomicReference&lt;Status&gt;</text>
+  <text x="444" y="670" class="svg-t-sm">immutable value &#183; the book itself never crosses</text>
 
   <path class="wire" d="M160,684 L160,708"/>
   <text x="174" y="700" class="wire-label">take(), drains</text>
-  <path class="wire" d="M560,684 L560,708"/>
-  <path class="wire" d="M778,684 L778,708"/>
+  <path class="wire" d="M470,684 L470,708"/>
+  <path class="wire" d="M721,684 L721,708"/>
 
   <!-- lane: trade writer -->
-  <rect x="16" y="710" width="424" height="124" rx="10" fill="var(--lane-writer)" class="svg-lane"/>
+  <rect x="16" y="710" width="400" height="124" rx="10" fill="var(--lane-writer)" class="svg-lane"/>
   <text x="32" y="730" class="svg-lane-label">TRADE WRITER THREAD</text>
 
-  <a class="node" href="#audit"><rect x="48" y="752" width="212" height="48" rx="7" class="svg-box-accent"/>
-    <text x="154" y="774" text-anchor="middle" class="svg-t svg-mono">TradeLogger</text>
-    <text x="154" y="789" text-anchor="middle" class="svg-t-sm">writeLoop()</text></a>
-  <path class="wire" d="M260,776 L284,776"/>
-  <rect x="290" y="752" width="134" height="48" rx="7" class="svg-box"/>
-  <text x="357" y="774" text-anchor="middle" class="svg-t svg-mono">trades.csv</text>
-  <text x="357" y="789" text-anchor="middle" class="svg-t-sm">CSV audit trail</text>
-  <text x="48" y="820" class="svg-t-sm">flushes whenever the queue empties</text>
+  <a class="node" href="#audit"><rect x="32" y="752" width="190" height="48" rx="7" class="svg-box-accent"/>
+    <text x="127" y="774" text-anchor="middle" class="svg-t svg-mono">TradeLogger</text>
+    <text x="127" y="789" text-anchor="middle" class="svg-t-sm">writeLoop()</text></a>
+  <path class="wire" d="M222,776 L238,776"/>
+  <rect x="244" y="752" width="156" height="48" rx="7" class="svg-box"/>
+  <text x="322" y="774" text-anchor="middle" class="svg-t svg-mono">trades.csv</text>
+  <text x="322" y="789" text-anchor="middle" class="svg-t-sm">audit trail</text>
+  <text x="32" y="820" class="svg-t-sm">flushes whenever the queue empties</text>
 
   <!-- lane: main -->
-  <rect x="460" y="710" width="200" height="124" rx="10" fill="var(--lane-main)" class="svg-lane"/>
-  <text x="476" y="730" class="svg-lane-label">MAIN THREAD</text>
+  <rect x="428" y="710" width="180" height="124" rx="10" fill="var(--lane-main)" class="svg-lane"/>
+  <text x="444" y="730" class="svg-lane-label">MAIN THREAD</text>
 
-  <a class="node" href="#app"><rect x="476" y="752" width="168" height="48" rx="7" class="svg-box-accent"/>
-    <text x="560" y="774" text-anchor="middle" class="svg-t svg-mono">Main</text>
-    <text x="560" y="789" text-anchor="middle" class="svg-t-sm">renders, 5 fps</text></a>
-  <text x="476" y="820" class="svg-t-sm">terminal I/O, off the matcher</text>
+  <a class="node" href="#app"><rect x="444" y="752" width="148" height="48" rx="7" class="svg-box-accent"/>
+    <text x="518" y="774" text-anchor="middle" class="svg-t svg-mono">ConsoleRenderer</text>
+    <text x="518" y="789" text-anchor="middle" class="svg-t-sm">redraws, 5 fps</text></a>
+  <text x="444" y="820" class="svg-t-sm">terminal I/O, off the matcher</text>
 
   <!-- lane: http -->
-  <rect x="672" y="710" width="212" height="124" rx="10" fill="var(--lane-http)" class="svg-lane"/>
-  <text x="688" y="730" class="svg-lane-label">HTTP &#183; VIRTUAL THREADS</text>
+  <rect x="620" y="710" width="202" height="124" rx="10" fill="var(--lane-http)" class="svg-lane"/>
+  <text x="636" y="730" class="svg-lane-label">HTTP &#183; VIRTUAL</text>
 
-  <a class="node" href="#feed"><rect x="688" y="752" width="180" height="48" rx="7" class="svg-box-accent"/>
-    <text x="778" y="774" text-anchor="middle" class="svg-t svg-mono">BookFeedServer</text>
-    <text x="778" y="789" text-anchor="middle" class="svg-t-sm">GET /book</text></a>
-  <text x="688" y="820" class="svg-t-sm">MarketDataSnapshot &#8594; JSON</text>
+  <a class="node" href="#feed"><rect x="636" y="752" width="170" height="48" rx="7" class="svg-box-accent"/>
+    <text x="721" y="774" text-anchor="middle" class="svg-t svg-mono">BookFeedServer</text>
+    <text x="721" y="789" text-anchor="middle" class="svg-t-sm">GET /book</text></a>
+  <text x="636" y="820" class="svg-t-sm">snapshot &#8594; JSON</text>
+
+  <!-- boundary 4: fills must arrive, requote ticks need not -->
+  <rect x="16" y="856" width="868" height="80" rx="10" fill="var(--boundary)" class="svg-lane"/>
+  <text x="32" y="878" class="svg-lane-label">BOUNDARY 4 &#183; STRATEGY COMMANDS</text>
+  <text x="32" y="904" class="svg-t svg-mono">LinkedBlockingQueue&lt;Command&gt;</text>
+  <text x="32" y="922" class="svg-t-sm">capacity 100,000 &#183; a dropped fill leaves the position wrong; a dropped tick is only stale</text>
+
+  <path class="wire" d="M160,936 L160,962"/>
+  <text x="174" y="954" class="wire-label">take()</text>
+
+  <!-- lane: strategy -->
+  <rect x="16" y="962" width="430" height="124" rx="10" fill="var(--lane-strategy)" class="svg-lane"/>
+  <text x="32" y="982" class="svg-lane-label">STRATEGY THREAD</text>
+
+  <a class="node" href="#strategy"><rect x="32" y="1004" width="186" height="48" rx="7" class="svg-box-accent"/>
+    <text x="125" y="1026" text-anchor="middle" class="svg-t svg-mono">StrategyRunner</text>
+    <text x="125" y="1041" text-anchor="middle" class="svg-t-sm">runLoop()</text></a>
+  <path class="wire" d="M218,1028 L234,1028"/>
+  <a class="node" href="#strategy"><rect x="240" y="1004" width="190" height="48" rx="7" class="svg-box"/>
+    <text x="335" y="1026" text-anchor="middle" class="svg-t svg-mono">QuotingStrategy</text>
+    <text x="335" y="1041" text-anchor="middle" class="svg-t-sm">Position, quotes, P&amp;L</text></a>
+  <text x="32" y="1072" class="svg-t-sm">its quotes rejoin BOUNDARY 1 as ordinary submits</text>
+
+  <!-- lane: requote clock -->
+  <rect x="460" y="962" width="424" height="124" rx="10" fill="var(--lane-requote)" class="svg-lane"/>
+  <text x="476" y="982" class="svg-lane-label">REQUOTE THREAD</text>
+
+  <a class="node" href="#strategy"><rect x="476" y="1004" width="200" height="48" rx="7" class="svg-box-accent"/>
+    <text x="576" y="1026" text-anchor="middle" class="svg-t svg-mono">RequoteScheduler</text>
+    <text x="576" y="1041" text-anchor="middle" class="svg-t-sm">scheduleWithFixedDelay</text></a>
+  <path class="wire" d="M676,1028 L700,1028 L700,940"/>
+  <text x="476" y="1072" class="svg-t-sm">offers a Requote tick, never blocks</text>
 </svg>
 </div>
 
@@ -313,12 +355,15 @@ footer a{color:var(--accent)}
   <span><i style="background:var(--lane-writer)"></i>trade writer thread</span>
   <span><i style="background:var(--lane-main)"></i>main thread</span>
   <span><i style="background:var(--lane-http)"></i>http virtual threads</span>
+  <span><i style="background:var(--lane-strategy)"></i>strategy thread</span>
+  <span><i style="background:var(--lane-requote)"></i>requote thread</span>
   <span><i style="background:var(--boundary)"></i>thread boundary</span>
 </div>
 
-<p class="muted">The diagram shows what <strong>runs today</strong>. Phase 5's strategy thread
-is built and tested but not yet wired into <code>Main</code>, so it is documented below rather
-than drawn here - see <a href="#strategy">com.mwang.strategy</a>.</p>
+<p class="muted">Three listeners run on the matcher thread, in that order: <strong>audit
+first</strong>, so a trade is on disk before anything downstream can throw; display second;
+<strong>strategy last</strong>, and only ever <code>offer</code>, so it can never hold the
+matcher up.</p>
 
 <h2>The threads</h2>
 
@@ -360,11 +405,19 @@ than drawn here - see <a href="#strategy">com.mwang.strategy</a>.</p>
           <code>HttpServer.stop</code> does not do for you</td>
     </tr>
     <tr>
-      <td><code>strategy</code> <em>(not yet wired)</em></td>
+      <td><code>strategy</code></td>
       <td><code>StrategyRunner.start()</code></td>
-      <td>the strategy's position and its live quote ids</td>
+      <td>the strategy's position, its live quote ids and its P&amp;L</td>
       <td>a queued <code>Shutdown</code> command, so the fills it owes its position are
-          delivered first</td>
+          delivered first - and stopped <em>before</em> the gateway, so its last cancels still
+          land</td>
+    </tr>
+    <tr>
+      <td><code>requote</code></td>
+      <td><code>RequoteScheduler.start()</code></td>
+      <td>nothing. It only asks the strategy to replace its quotes</td>
+      <td><code>shutdown()</code> then <code>awaitTermination</code>. Stopped first of all, so
+          no new tick arrives part-way through a shutdown</td>
     </tr>
   </tbody>
 </table>
@@ -377,8 +430,8 @@ stopped immediately - and must be, since nothing feeds it, so no sentinel could 
 Hence the producer is interrupted and the consumers are not.</p>
 
 <p class="muted">Order matters at both ends. Start inwards-out, each consumer before whatever
-feeds it: trade log, gateway, driver, feed server. Stop in the exact reverse, so nothing is
-still submitting to a component that has already closed.</p>
+feeds it: trade log, gateway, strategy, driver, feed server, requote clock. Stop in the exact
+reverse, so nothing is still submitting to a component that has already closed.</p>
 
 <h2>Life of one order</h2>
 
@@ -509,27 +562,50 @@ instead of sharing a structure.</p>
 <div class="pkg" id="strategy">
   <h4>com.mwang.strategy</h4>
   <ul>
-    <li><b>Strategy</b> - one method, <code>onFill(Trade)</code>, called on the strategy thread.
-      Holds its own gateway and snapshot supplier, so this interface passes neither and the
-      runner stays free of any opinion about trading.</li>
+    <li><b>Strategy</b> / <b>QuotingStrategy</b> - <code>onFill(Trade)</code> and
+      <code>onRequote()</code>, both called on the strategy thread. A strategy holds its own
+      gateway and snapshot supplier, so these interfaces pass neither and the runner stays free
+      of any opinion about trading.</li>
     <li><b>StrategyRunner</b> - the <code>MatchListener</code> that makes the above safe. Its
       <code>onMatch</code> runs on the matcher thread and does nothing but <code>offer</code> a
       fill onto its own queue. A strategy quoting directly from <code>onMatch</code> would have
       the matcher adding two quotes for every order it removes, filling the queue it alone
       drains until <code>put()</code> blocks it permanently - a cycle rather than a chain. A
       test reproduces that shape and times out, to prove the guard works.</li>
-    <li><b>Command</b> - <code>Fill</code> or <code>Shutdown</code>, sealed. A sentinel
-      <code>Trade</code> reaching a strategy would be booked as a real execution and corrupt its
-      position silently, which is the sharpest reason of the three queues to type the signal.</li>
+    <li><b>Command</b> - <code>Fill</code>, <code>Requote</code> or <code>Shutdown</code>,
+      sealed. A sentinel <code>Trade</code> reaching a strategy would be booked as a real
+      execution and corrupt its position silently, which is the sharpest reason of the four
+      queues to type the signal.</li>
+    <li><b>RequoteScheduler</b> - a one-thread <code>ScheduledExecutorService</code> on a fixed
+      <em>delay</em>, not a fixed rate: after a pause, a fixed rate runs every missed tick back
+      to back, each one cancelling and reposting both quotes for the same resulting pair. Its
+      task catches <code>RuntimeException</code>, because a throw escaping a scheduled task
+      cancels the schedule silently and the strategy would simply stop quoting.</li>
+    <li><b>Position</b> - signed quantity and a <em>cost basis</em> rather than an average
+      price, which would truncate on every fill. Realises P&amp;L on whatever a fill closes;
+      unrealised is marked against a mid.</li>
+    <li><b>SimpleMarketMaker</b> / <b>AdaptiveMarketMaker</b> - a fixed half-spread, and one
+      scaled to measured volatility. Both skew their centre against inventory and withhold a
+      side at the position limit. <code>README.md</code> has the measurements for why the fixed
+      one loses money.</li>
   </ul>
 </div>
 
 <div class="pkg" id="app">
-  <h4>com.mwang &middot; com.mwang.exception</h4>
+  <h4>com.mwang &middot; com.mwang.sim &middot; com.mwang.exception</h4>
   <ul>
-    <li><b>Main</b> - wires everything, starts forwards, stops backwards, renders snapshots.
-      Owns the <code>AtomicReference</code> and the listener lambda that writes to it; every
-      component below it stays unaware of the others.</li>
+    <li><b>SimulationRunner</b> - wires everything, starts forwards, stops backwards. Owns the
+      <code>AtomicReference</code> and the listener lambdas that write to it; every component
+      below it stays unaware of the others. The construction order is circular - the maker needs
+      the gateway, the gateway needs its listeners, one listener is the runner, the runner needs
+      the maker - and the <code>notifyStrategy</code> lambda is what breaks it, because a lambda
+      body does not run when the lambda is built.</li>
+    <li><b>SimulationConfig</b> / <b>SimulationResult</b> / <b>StrategyFactory</b> - the
+      parameters in, the figures out, and which strategy to quote with. A factory rather than
+      another config field, because each strategy takes different parameters.</li>
+    <li><b>ConsoleRenderer</b> - every frame the same height, so redrawing over the previous one
+      cannot tear.</li>
+    <li><b>Main</b> - one line: a config and a strategy.</li>
     <li><b>OrderException</b> and its two subtypes - business rejections the gateway catches
       and logs, as distinct from programming errors, which are left to crash.</li>
   </ul>
@@ -570,7 +646,7 @@ instead of sharing a structure.</p>
   <b>Control signals are typed, not faked</b>
   <p>All three queues carry a sealed <code>Command</code> - <code>Submit</code>/<code>Cancel</code>/
   <code>Shutdown</code>, <code>Append</code>/<code>Shutdown</code>,
-  <code>Fill</code>/<code>Shutdown</code>. Shutting a consumer down needs a sentinel that
+  <code>Fill</code>/<code>Requote</code>/<code>Shutdown</code>. Shutting a consumer down needs a sentinel that
   arrives in order behind real work; using a fake <code>Order</code> or <code>Trade</code> with
   values chosen to satisfy a validator puts a bogus execution one missed identity check away
   from the book. A sealed case is checked by the compiler, and the exhaustive
