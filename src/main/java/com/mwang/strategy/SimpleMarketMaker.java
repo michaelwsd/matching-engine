@@ -8,14 +8,15 @@ import com.mwang.model.OrderType;
 import com.mwang.model.Side;
 import com.mwang.model.Trade;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * Quotes both sides of the book at a fixed half-spread around the mid, replacing its quotes on
- * every requote tick.
+ * Quotes both sides of the book at a fixed half-spread, replacing its quotes on every requote
+ * tick. Skews the centre away from its position, and withholds a side altogether once the
+ * position reaches {@link #maxPosition}.
  *
  * <p>Confined to the strategy thread, like everything {@link StrategyRunner} calls, so none
  * of its state is synchronised.
@@ -37,23 +38,25 @@ public final class SimpleMarketMaker implements Strategy {
     /** Where to quote before the book has two sides to take a mid from. */
     private final long referenceMid;
 
+    /**
+     * Hard ceiling on the absolute position: past this the side that would worsen it is not
+     * quoted. Checked before posting, so a fill can overshoot it by up to {@link #quoteSize}.
+     */
+    private final long maxPosition;
+
+    /** Ticks the quote centre moves at a full {@link #maxPosition}, scaled down below that. */
+    private final long maxSkew;
+
     private final Position position = new Position();
 
     /**
-     * Every quote this strategy has posted, with the side it went out on, so {@link #onFill}
-     * can pick its own trades out of the whole flow.
-     *
-     * <p>Holds far more than the two live quotes and is never pruned. Cancelling is
-     * asynchronous, so a replaced quote keeps trading until the matcher reaches the cancel,
-     * and a {@link Trade} does not say whether an order is finished, so no fill is a safe
-     * moment to drop an id. Two entries per tick; a long-lived strategy would evict by age.
+     * Every order id this strategy has posted, so {@link #onFill} can pick out its own trades.
+     * Never pruned: a cancelled quote keeps trading until the matcher reaches the cancel, and
+     * a {@link Trade} does not say whether an order is finished.
      */
-    private final Map<Long, Side> myQuotes = new HashMap<>();
+    private final Set<Long> myQuotes = new HashSet<>();
 
-    /**
-     * The two quotes to cancel on the next tick, or {@link #NO_QUOTE}. Unlike
-     * {@link #myQuotes}, replacing a quote ends its life here immediately.
-     */
+    /** The two quotes to cancel on the next tick, or {@link #NO_QUOTE}. */
     private long bidId = NO_QUOTE;
     private long askId = NO_QUOTE;
 
@@ -66,6 +69,10 @@ public final class SimpleMarketMaker implements Strategy {
      * @param halfSpread   ticks either side of the mid; must be positive
      * @param quoteSize    quantity on each side; must be positive
      * @param referenceMid fallback mid for an empty or one-sided book; must be positive
+     * @param maxPosition  largest absolute position to hold; must be positive
+     * @param maxSkew      ticks to shift the quote centre at a full position; must be positive
+     * @throws IllegalArgumentException if any limit is not positive, or if {@code referenceMid}
+     *                                  cannot carry the half-spread and a full skew
      */
     public SimpleMarketMaker(OrderGateway gateway,
                              Supplier<BookSnapshot> book,
@@ -73,7 +80,9 @@ public final class SimpleMarketMaker implements Strategy {
                              long accountId,
                              long halfSpread,
                              int quoteSize,
-                             long referenceMid) {
+                             long referenceMid,
+                             long maxPosition,
+                             long maxSkew) {
         if (halfSpread <= 0) {
             throw new IllegalArgumentException("half spread must be positive: " + halfSpread);
         }
@@ -83,6 +92,18 @@ public final class SimpleMarketMaker implements Strategy {
         if (referenceMid <= 0) {
             throw new IllegalArgumentException("reference mid must be positive: " + referenceMid);
         }
+        if (maxPosition <= 0) {
+            throw new IllegalArgumentException("max position must be positive: " + maxPosition);
+        }
+        if (maxSkew <= 0) {
+            throw new IllegalArgumentException("max skew must be positive: " + maxSkew);
+        }
+        // Otherwise a fully skewed bid prices at or below zero and Order rejects it.
+        if (referenceMid <= halfSpread + maxSkew) {
+            throw new IllegalArgumentException("reference mid " + referenceMid
+                    + " cannot carry a half-spread of " + halfSpread
+                    + " and a skew of " + maxSkew);
+        }
 
         this.gateway = Objects.requireNonNull(gateway, "gateway");
         this.book = Objects.requireNonNull(book, "book");
@@ -91,6 +112,8 @@ public final class SimpleMarketMaker implements Strategy {
         this.halfSpread = halfSpread;
         this.quoteSize = quoteSize;
         this.referenceMid = referenceMid;
+        this.maxPosition = maxPosition;
+        this.maxSkew = maxSkew;
     }
 
     /**
@@ -100,29 +123,40 @@ public final class SimpleMarketMaker implements Strategy {
     @Override
     public void onFill(Trade trade) {
         // bid quote got filled
-        if (myQuotes.containsKey(trade.buyOrderId())) {
+        if (myQuotes.contains(trade.buyOrderId())) {
             position.onFill(Side.BUY, trade.quantity(), trade.price());
         }
 
         // ask quote got filled
-        else if (myQuotes.containsKey(trade.sellOrderId())) {
+        else if (myQuotes.contains(trade.sellOrderId())) {
             position.onFill(Side.SELL, trade.quantity(), trade.price());
         }
     }
 
-    /** Cancels both live quotes and posts a fresh pair around the current mid. */
+    /**
+     * Cancels both live quotes and posts a fresh pair around the skewed mid, leaving out
+     * whichever side would push the position further past {@link #maxPosition}.
+     */
     @Override
     public void onRequote() throws InterruptedException {
-        // cancel old quotes
+        // Cancel before posting, or both pairs are live until the matcher reaches the cancels.
+        // Cleared here so a withheld side keeps no id for a quote it no longer has.
         cancel(bidId);
         cancel(askId);
+        bidId = NO_QUOTE;
+        askId = NO_QUOTE;
 
-        // place a fresh pair around the current mid
-        // Task 5.5 adds the risk limit here: skew or withhold a side once the position is
-        // large.
-        long mid = currentMid();
-        bidId = post(Side.BUY, mid - halfSpread);
-        askId = post(Side.SELL, mid + halfSpread);
+        long held = position.quantity();
+        // skew the quotes based on our current position (less flat = more skew)
+        long quoteMid = currentMid() + skew(held);
+
+        // Signed, so one comparison a side covers long and short without branching on which.
+        if (held < maxPosition) {
+            bidId = post(Side.BUY, quoteMid - halfSpread);
+        }
+        if (held > -maxPosition) {
+            askId = post(Side.SELL, quoteMid + halfSpread);
+        }
     }
 
     /**
@@ -140,7 +174,16 @@ public final class SimpleMarketMaker implements Strategy {
     }
 
     /**
-     * Submits one quote, records it in {@link #myQuotes} and returns its id. Blocks when the
+     * @param held the signed position
+     * @return ticks to shift the quote centre, negative when long so the ask gets cheap and
+     *         the bid expensive. Proportional to {@code held}, truncated towards zero.
+     */
+    private long skew(long held) {
+        return -(held * maxSkew) / maxPosition;
+    }
+
+    /**
+     * Submits one quote, records its id in {@link #myQuotes} and returns it. Blocks when the
      * gateway queue is full, which paces this strategy rather than the matcher.
      */
     private long post(Side side, long price) throws InterruptedException {
@@ -155,7 +198,7 @@ public final class SimpleMarketMaker implements Strategy {
         );
 
         // Registered before submitting, so an order is never on the book unrecorded.
-        myQuotes.put(newQuote.getOrderId(), side);
+        myQuotes.add(newQuote.getOrderId());
         gateway.submit(newQuote);
         return newQuote.getOrderId();
     }

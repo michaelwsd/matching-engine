@@ -12,6 +12,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,6 +40,8 @@ class SimpleMarketMakerTest {
     private static final long HALF_SPREAD = 20;
     private static final int QUOTE_SIZE = 50;
     private static final long REFERENCE_MID = 10_000;
+    private static final long MAX_POSITION = 100;
+    private static final long MAX_SKEW = 20;
     private static final long FIRST_ID = 5_001;
     private static final int DEPTH = 5;
 
@@ -54,7 +58,8 @@ class SimpleMarketMakerTest {
     private final AtomicReference<BookSnapshot> published = new AtomicReference<>(EMPTY_BOOK);
 
     private final SimpleMarketMaker maker = new SimpleMarketMaker(
-            gateway, published::get, ids, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID);
+            gateway, published::get, ids, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE,
+            REFERENCE_MID, MAX_POSITION, MAX_SKEW);
 
     @BeforeEach
     void startGateway() {
@@ -159,6 +164,164 @@ class SimpleMarketMakerTest {
         assertThat(gateway.ordersCancelled()).isEqualTo(2);
     }
 
+    // --- the soft layer: proportional skew ---
+
+    /**
+     * Quote centre moves by {@code -held * MAX_SKEW / MAX_POSITION}, so at a tenth of the limit
+     * it moves a tenth of the skew. The 7-lot row lands on 1.4 ticks and truncates to 1.
+     */
+    @ParameterizedTest(name = "position {0} quotes {1} / {2}")
+    @CsvSource({
+            "   0, 9980, 10020",
+            "   7, 9979, 10019",
+            "  25, 9975, 10015",
+            "  50, 9970, 10010",
+            " -25, 9985, 10025",
+            " -50, 9990, 10030",
+    })
+    @Timeout(5)
+    void shouldSkewBothQuotesAgainstTheInventory(int held, long bid, long ask) throws Exception {
+        maker.onRequote();
+        if (held > 0) {
+            buy(held);
+        } else if (held < 0) {
+            sell(-held);
+        }
+
+        maker.onRequote();
+        gateway.shutdown();
+
+        assertThat(book.bestBid()).isEqualTo(bid);
+        assertThat(book.bestAsk()).isEqualTo(ask);
+        assertThat(book.bestAsk() - book.bestBid())
+                .as("skew moves the centre, it never changes the width")
+                .isEqualTo(2 * HALF_SPREAD);
+    }
+
+    /**
+     * At the limit the full skew applies, and because MAX_SKEW equals HALF_SPREAD the surviving
+     * quote sits exactly on the market mid: the whole edge surrendered to get flat.
+     */
+    @Test
+    @Timeout(5)
+    void shouldOfferAtTheMarketMidWhenLongAtTheLimit() throws Exception {
+        maker.onRequote();
+        buy(QUOTE_SIZE);
+        buy(QUOTE_SIZE);
+
+        maker.onRequote();
+        gateway.shutdown();
+
+        assertThat(book.bestAsk()).isEqualTo(REFERENCE_MID);
+        assertThat(book.bestBid()).as("the bid is withheld, not merely skewed")
+                .isEqualTo(OrderBook.NO_PRICE);
+    }
+
+    @Test
+    @Timeout(5)
+    void shouldBidAtTheMarketMidWhenShortAtTheLimit() throws Exception {
+        maker.onRequote();
+        sell(QUOTE_SIZE);
+        sell(QUOTE_SIZE);
+
+        maker.onRequote();
+        gateway.shutdown();
+
+        assertThat(book.bestBid()).isEqualTo(REFERENCE_MID);
+        assertThat(book.bestAsk()).isEqualTo(OrderBook.NO_PRICE);
+    }
+
+    // --- the hard position limit ---
+
+    /** Half way to the limit is not at it, so both sides still go out. */
+    @Test
+    @Timeout(5)
+    void shouldQuoteBothSidesWhileUnderTheLimit() throws Exception {
+        maker.onRequote();
+        buy(QUOTE_SIZE);
+
+        maker.onRequote();
+        gateway.shutdown();
+
+        BookSnapshot resting = book.snapshot(DEPTH);
+        assertThat(resting.bids()).hasSize(1);
+        assertThat(resting.asks()).hasSize(1);
+    }
+
+    /**
+     * Long at the limit, so bidding could only make it worse. The ask stays: a fill there is
+     * the thing that brings the position back, so withholding both sides would be strictly
+     * worse than withholding one.
+     */
+    @Test
+    @Timeout(5)
+    void shouldWithholdTheBidWhenLongAtTheLimit() throws Exception {
+        maker.onRequote();
+        buy(QUOTE_SIZE);
+        buy(QUOTE_SIZE);
+
+        maker.onRequote();
+        gateway.shutdown();
+
+        BookSnapshot resting = book.snapshot(DEPTH);
+        assertThat(maker.position().quantity()).isEqualTo(MAX_POSITION);
+        assertThat(resting.bids()).as("nothing that could add to the position").isEmpty();
+        assertThat(resting.asks()).as("the side that reduces it keeps quoting").hasSize(1);
+    }
+
+    /** The mirror image, where a sign error in the comparison would hide. */
+    @Test
+    @Timeout(5)
+    void shouldWithholdTheAskWhenShortAtTheLimit() throws Exception {
+        maker.onRequote();
+        sell(QUOTE_SIZE);
+        sell(QUOTE_SIZE);
+
+        maker.onRequote();
+        gateway.shutdown();
+
+        BookSnapshot resting = book.snapshot(DEPTH);
+        assertThat(maker.position().quantity()).isEqualTo(-MAX_POSITION);
+        assertThat(resting.asks()).isEmpty();
+        assertThat(resting.bids()).hasSize(1);
+    }
+
+    /** A limit, not a latch: once the position retreats, the withheld side comes back. */
+    @Test
+    @Timeout(5)
+    void shouldResumeQuotingBothSidesWhenThePositionRetreats() throws Exception {
+        maker.onRequote();
+        buy(QUOTE_SIZE);
+        buy(QUOTE_SIZE);
+        maker.onRequote(); // at the limit, bid withheld
+
+        sell(QUOTE_SIZE);
+        maker.onRequote();
+        gateway.shutdown();
+
+        BookSnapshot resting = book.snapshot(DEPTH);
+        assertThat(resting.bids()).hasSize(1);
+        assertThat(resting.asks()).hasSize(1);
+    }
+
+    /**
+     * A withheld side leaves no live quote, so the next tick must not try to cancel the one it
+     * withheld. Keeping the stale id instead of clearing it shows up as a missed cancel.
+     */
+    @Test
+    @Timeout(5)
+    void shouldNotCancelASideItWithheld() throws Exception {
+        maker.onRequote();
+        buy(QUOTE_SIZE);
+        buy(QUOTE_SIZE);
+        maker.onRequote(); // bid withheld
+        maker.onRequote(); // must not cancel the bid it never posted
+
+        gateway.shutdown();
+
+        assertThat(gateway.cancelsMissed()).isZero();
+    }
+
     // --- telling its own fills from everyone else's ---
 
     /** The first id drawn is the bid, the second the ask. */
@@ -234,36 +397,60 @@ class SimpleMarketMakerTest {
 
     @Test
     void shouldRejectANonPositiveHalfSpread() {
-        assertThatThrownBy(() -> makerWith(0, QUOTE_SIZE, REFERENCE_MID))
+        assertThatThrownBy(() -> makerWith(0, QUOTE_SIZE, REFERENCE_MID, MAX_POSITION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("half spread");
     }
 
     @Test
     void shouldRejectANonPositiveQuoteSize() {
-        assertThatThrownBy(() -> makerWith(HALF_SPREAD, 0, REFERENCE_MID))
+        assertThatThrownBy(() -> makerWith(HALF_SPREAD, 0, REFERENCE_MID, MAX_POSITION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("quote size");
     }
 
     @Test
     void shouldRejectANonPositiveReferenceMid() {
-        assertThatThrownBy(() -> makerWith(HALF_SPREAD, QUOTE_SIZE, 0))
+        assertThatThrownBy(() -> makerWith(HALF_SPREAD, QUOTE_SIZE, 0, MAX_POSITION))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("reference mid");
+    }
+
+    @Test
+    void shouldRejectANonPositiveMaxPosition() {
+        assertThatThrownBy(() -> makerWith(HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max position");
+    }
+
+    @Test
+    void shouldRejectANonPositiveMaxSkew() {
+        assertThatThrownBy(() -> new SimpleMarketMaker(gateway, published::get, ids,
+                STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID, MAX_POSITION, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("max skew");
+    }
+
+    /** A reference mid this low would price the bid at or below zero once fully skewed. */
+    @Test
+    void shouldRejectAReferenceMidTooLowToCarryTheSpreadAndSkew() {
+        assertThatThrownBy(() -> makerWith(HALF_SPREAD, QUOTE_SIZE,
+                HALF_SPREAD + MAX_SKEW, MAX_POSITION))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot carry");
     }
 
     @Test
     void shouldRejectMissingCollaborators() {
         Supplier<BookSnapshot> supplier = published::get;
         assertThatThrownBy(() -> new SimpleMarketMaker(
-                null, supplier, ids, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID))
+                null, supplier, ids, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID, MAX_POSITION, MAX_SKEW))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new SimpleMarketMaker(
-                gateway, null, ids, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID))
+                gateway, null, ids, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID, MAX_POSITION, MAX_SKEW))
                 .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new SimpleMarketMaker(
-                gateway, supplier, null, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID))
+                gateway, supplier, null, STRATEGY_ACCOUNT, HALF_SPREAD, QUOTE_SIZE, REFERENCE_MID, MAX_POSITION, MAX_SKEW))
                 .isInstanceOf(NullPointerException.class);
     }
 
@@ -277,8 +464,22 @@ class SimpleMarketMakerTest {
                 bestBid, bestAsk));
     }
 
-    private SimpleMarketMaker makerWith(long halfSpread, int quoteSize, long referenceMid) {
+    /**
+     * Moves the position by handing the strategy a fill on a quote it posted. The same id is
+     * reused across calls, which {@link Position} neither sees nor cares about: it reads only
+     * the side, the quantity and the price.
+     */
+    private void buy(int lots) {
+        maker.onFill(new Trade(FIRST_ID, FOREIGN_ID, 9_980, lots, 1L));
+    }
+
+    private void sell(int lots) {
+        maker.onFill(new Trade(FOREIGN_ID, FIRST_ID + 1, 10_020, lots, 1L));
+    }
+
+    private SimpleMarketMaker makerWith(long halfSpread, int quoteSize, long referenceMid,
+                                        long maxPosition) {
         return new SimpleMarketMaker(gateway, published::get, ids, STRATEGY_ACCOUNT,
-                halfSpread, quoteSize, referenceMid);
+                halfSpread, quoteSize, referenceMid, maxPosition, MAX_SKEW);
     }
 }
