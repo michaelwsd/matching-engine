@@ -64,7 +64,17 @@ public record SimulationConfig(Duration duration,
         Objects.requireNonNull(scrollingRefresh, "scrollingRefresh");
         Objects.requireNonNull(tradeLog, "tradeLog");
         Objects.requireNonNull(requoteInterval, "requoteInterval");
-        if (duration.toMillis() < refresh.toMillis()) {
+        // Both, not just refresh: which one is used depends on whether output is a terminal,
+        // so validating one leaves a run that is fine interactively and a blur in a log.
+        requireLongerThanARefresh(duration, refresh);
+        requireLongerThanARefresh(duration, scrollingRefresh);
+    }
+
+    private static void requireLongerThanARefresh(Duration duration, Duration refresh) {
+        if (refresh.isZero() || refresh.isNegative()) {
+            throw new IllegalArgumentException("refresh must be positive: " + refresh);
+        }
+        if (duration.compareTo(refresh) < 0) {
             throw new IllegalArgumentException("duration " + duration
                     + " is shorter than one refresh of " + refresh);
         }
@@ -104,7 +114,12 @@ public record SimulationConfig(Duration duration,
                 feedPort,
                 // Prices in ticks, where one tick is one cent.
                 10_000,
-                5,
+                // One tick a step, not five. At five the mid moved about half the book's own
+                // spread per order, so every resting quote was stale the moment it landed and
+                // no liquidity provider could win: measured over ten price paths, the best
+                // strategy netted +302 ticks, which is zero. Real markets move a small
+                // fraction of a spread per trade. Raise this to watch the pathology.
+                1,
                 500,
                 20,
                 10,
@@ -114,7 +129,10 @@ public record SimulationConfig(Duration duration,
                 42,
                 7,
                 99,
-                // Half the flow's offset, so the strategy quotes inside the market and fills.
+                // Not "half the flow's offset so it quotes inside": the flow rests orders from
+                // many different mids, so the aggregate book is far tighter than its offset -
+                // around 5 ticks against an offset of 20. At 10 a side this quote sits behind
+                // the touch and only fills when the price moves through it. See the README.
                 10,
                 50,
                 300,

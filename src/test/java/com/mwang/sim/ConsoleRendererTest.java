@@ -31,7 +31,8 @@ class ConsoleRendererTest {
     private static final String ANSI_PROPERTY = "simulation.ansi";
     private static final long MAX_POSITION = 300;
 
-    private final SimulationConfig config = SimulationConfig.of(Duration.ofSeconds(1), 0);
+    /** Nothing here runs a simulation, so the duration only has to be a legal one. */
+    private final SimulationConfig config = SimulationConfig.of(Duration.ofSeconds(20), 0);
 
     private PrintStream realOut;
     private String previousAnsi;

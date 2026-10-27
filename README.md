@@ -55,12 +55,9 @@ The engine and book hold no locks. They are confined to the matcher thread, so t
 things crossing a boundary are orders in and immutable values out.
 [`docs/architecture.html`](docs/architecture.html) draws this in full detail.
 
-### Phase 5 extension point
+### The strategy column
 
-The strategy column is **built and tested but not yet wired into `Main`** - there is no
-`Strategy` implementation to run yet. Everything else in the diagram runs today.
-
-It gets its own thread rather than quoting straight from `onMatch` because the matcher would
+The strategy runs on its own thread rather than quoting straight from `onMatch` because the matcher would
 otherwise be adding two quotes for every order it removes, filling the queue it alone drains
 until `put()` blocks it permanently. A chain, never a cycle. A test reproduces that shape and
 times out, so the guard cannot be removed unnoticed.
@@ -297,3 +294,56 @@ Decisions worth recording, with the reason rather than just the rule.
   record of every trade is the CSV, unconditionally.
 - **Three independent seeds** - walk, generator, pacing - so changing how orders are paced
   cannot disturb a price sequence a test asserts on.
+
+### Strategy and market making
+
+Two strategies ship. `SimpleMarketMaker` quotes a fixed half-spread either side of the book
+mid. `AdaptiveMarketMaker` sizes its half-spread from how much the mid has been moving.
+`StrategyFactory` chooses; `Main` runs the adaptive one.
+
+The fixed-spread version is the more instructive of the two, because measuring *why* it loses
+money found a defect in the market rather than in the strategy.
+
+- **A market maker earns the spread and pays for inventory.** Both are visible in the summary:
+  `realised P&L` is spread captured on round trips, `unrealised P&L` is what the open position
+  is worth. A maker can be good at the first and still lose on the second.
+- **Adverse selection is not a tendency here, it is the only fill mechanism.** Measured over
+  five price paths, `SimpleMarketMaker` ended long every time the market fell and short every
+  time it rose. Its quotes rested *behind* the touch 89% of the time (measured: 137 of 154
+  orders), and a quote behind the touch can only be filled by the price travelling through it
+  - which is to say, by the market moving against it. `bought / sold` in the summary shows it
+  directly: 281 lots bought against 89 sold, in a falling market.
+- **The flow does demand liquidity, which is what makes market making possible at all.**
+  `MarketDataGenerator` prices each order at `mid + U` with `U` uniform over `±quoteOffset`
+  and **independent of the side**, so roughly half of all orders cross the spread for no
+  informational reason. Without that, no liquidity provider could ever profit; a book of
+  purely passive orders only trades when someone is picked off.
+- **The flow's aggregate spread is far tighter than its own `quoteOffset`.** Orders rest from
+  many different mids, so an offset of ±20 produces a book spread of 4-8 ticks, not 40. Any
+  half-spread above about 4 is therefore *outside* the market. This is the trap the
+  `halfSpread` comment in `SimulationConfig` used to get wrong.
+- **The binding constraint is fair-value uncertainty, not spread width.** Compared against the
+  walk's true mid, the book mid is unbiased but carries a standard deviation of ~14 ticks.
+  Removing the maker's own quotes from the estimate, weighting by depth, smoothing with an
+  EWMA, and estimating from trade prices instead were all measured: none beat ~15 ticks. Each
+  observation of the mid carries ±11.5 ticks of `U` noise, and the mid moves faster than there
+  is time to average it away. **You cannot quote a 7-tick spread around a 15-tick estimate.**
+- **So the original market was unplayable.** With `tickStep` at 5, the mid moved about half the
+  book's own spread *per order*. Over ten price paths the best strategy netted +302 ticks,
+  which is zero. The default is now 1 tick a step; raise it to watch the pathology return.
+  Real markets move a small fraction of a spread per trade, which is the whole reason a
+  resting quote is worth anything.
+- **`AdaptiveMarketMaker` sizes the spread from measured volatility**, which is what makes one
+  strategy work in both a quiet market and a fast one. It quotes at its widest until it has
+  measured a move - an unfilled quote costs nothing, while a quote narrower than an unknown
+  volatility is picked off - and its inventory skew scales with the current spread, so a full
+  position always shifts the quotes by the same proportion of their width.
+- **Its volatility proxy has a known limit.** It measures the movement of the *book mid*, which
+  is a smoothed series, so it understates the true uncertainty when the book is very stale. In
+  the pathological `tickStep 5` regime it is therefore worse than a fixed spread. Measured over
+  ten paths at `tickStep 1`: adaptive wins 9 and totals +11,381 ticks, against +4,746 for the
+  fixed spread - 2.4x, by trading four times the volume at a thinner but still positive edge.
+- **Both strategies estimate fair value from a book that contains their own quotes.** It does
+  not matter at these spreads, because the quotes sit behind the touch and symmetric quotes
+  leave the mid unchanged anyway. It would matter for a strategy quoting at the touch, which is
+  the natural next step.

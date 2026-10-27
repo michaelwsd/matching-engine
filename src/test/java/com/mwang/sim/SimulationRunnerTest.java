@@ -188,4 +188,44 @@ class SimulationRunnerTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("shorter than one refresh");
     }
+
+    /**
+     * Off a terminal the renderer uses the scrolling refresh, so a configuration legal
+     * interactively must not be a blur in a log - or, worse, a run that ends immediately.
+     */
+    @Test
+    void shouldRejectARunShorterThanTheScrollingRefresh() {
+        assertThatThrownBy(() -> new SimulationConfig(
+                Duration.ofSeconds(1), Duration.ofMillis(200), Duration.ofHours(1),
+                5, tradeLogDirectory.resolve("unused.csv"), 0,
+                10_000, 5, 500, 20, 10, 100, 8, 42, 7, 99,
+                10, 50, 300, 10, Duration.ofMillis(100)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("shorter than one refresh");
+    }
+
+    /**
+     * The market must run for as long as it was asked to, whatever the display is doing. The
+     * run used to last {@code duration / refresh} whole refreshes, so an odd duration ended
+     * early while still reporting the duration requested - and a refresh longer than the run
+     * made it end at once, with the summary claiming the full duration anyway.
+     */
+    @Test
+    void shouldRunForTheWholeDurationWhateverTheRefreshRate() throws Exception {
+        Duration requested = Duration.ofSeconds(3);
+        // Deliberately not a divisor of the duration, which is what used to truncate the run.
+        Duration awkwardRefresh = Duration.ofSeconds(2);
+
+        long start = System.nanoTime();
+        new SimulationRunner(new SimulationConfig(
+                requested, awkwardRefresh, awkwardRefresh,
+                5, tradeLogDirectory.resolve("awkward.csv"), 0,
+                10_000, 5, 500, 20, 10, 100, 8, 42, 7, 99,
+                10, 50, 300, 10, Duration.ofMillis(100))).run();
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+
+        assertThat(elapsed)
+                .as("two whole refreshes would have been 4s, one would have been 2s")
+                .isGreaterThanOrEqualTo(requested);
+    }
 }

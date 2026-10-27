@@ -2,6 +2,7 @@ package com.mwang;
 
 import com.mwang.sim.SimulationConfig;
 import com.mwang.sim.SimulationRunner;
+import com.mwang.sim.StrategyFactory;
 
 import java.io.IOException;
 
@@ -12,6 +13,6 @@ import java.io.IOException;
 public final class Main {
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        new SimulationRunner(SimulationConfig.defaults()).run();
+        new SimulationRunner(SimulationConfig.defaults(), StrategyFactory.adaptive()).run();
     }
 }

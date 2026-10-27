@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  * of its state is synchronised. {@link #status()} is the one exception: an immutable snapshot
  * republished on every change, so a display thread can read it without a lock.
  */
-public final class SimpleMarketMaker implements Strategy {
+public final class SimpleMarketMaker implements QuotingStrategy {
 
     /** No live quote on that side. Zero is safe: {@link OrderIdAllocator} starts at 1. */
     private static final long NO_QUOTE = 0;
@@ -276,10 +276,8 @@ public final class SimpleMarketMaker implements Strategy {
         return position;
     }
 
-    /**
-     * @return an immutable view of the position and the live quotes, safe to read from any
-     *         thread while the strategy runs. Republished on every fill and every requote.
-     */
+    /** Republished on every fill and every requote. */
+    @Override
     public StrategyStatus status() {
         return status.get();
     }

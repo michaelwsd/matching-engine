@@ -13,13 +13,13 @@ import com.mwang.marketdata.MarketDataGenerator;
 import com.mwang.marketdata.MidPriceWalk;
 import com.mwang.marketdata.OrderFlowDriver;
 import com.mwang.model.OrderIdAllocator;
+import com.mwang.strategy.QuotingStrategy;
 import com.mwang.strategy.RequoteScheduler;
-import com.mwang.strategy.SimpleMarketMaker;
 import com.mwang.strategy.StrategyRunner;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -36,11 +36,22 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class SimulationRunner {
 
     private final SimulationConfig config;
+    private final StrategyFactory strategyFactory;
     private final ConsoleRenderer renderer;
 
-    /** @throws NullPointerException if {@code config} is null */
+    /**
+     * Runs with {@link StrategyFactory#simple()}, the task 5.3 maker.
+     *
+     * @throws NullPointerException if {@code config} is null
+     */
     public SimulationRunner(SimulationConfig config) {
+        this(config, StrategyFactory.simple());
+    }
+
+    /** @throws NullPointerException if either argument is null */
+    public SimulationRunner(SimulationConfig config, StrategyFactory strategyFactory) {
         this.config = Objects.requireNonNull(config, "config");
+        this.strategyFactory = Objects.requireNonNull(strategyFactory, "strategyFactory");
         this.renderer = new ConsoleRenderer(config);
     }
 
@@ -100,9 +111,8 @@ public final class SimulationRunner {
                     System.currentTimeMillis());
         });
 
-        SimpleMarketMaker maker = new SimpleMarketMaker(gateway, () -> latest.get().book(),
-                orderIds, config.strategyAccount(), config.halfSpread(), config.quoteSize(),
-                config.referenceMid(), config.maxPosition(), config.maxSkew());
+        QuotingStrategy maker =
+                strategyFactory.create(gateway, () -> latest.get().book(), orderIds, config);
         StrategyRunner runner = new StrategyRunner(maker);
         // Before gateway.start(), so the matcher thread cannot reach notifyStrategy first.
         // Thread.start() publishes everything written before it, so no further ceremony.
@@ -181,16 +191,26 @@ public final class SimulationRunner {
         return result;
     }
 
-    /** Draws a frame per refresh until the run duration is up. */
-    private void render(AtomicReference<MarketStatus> latest, SimpleMarketMaker maker)
+    /**
+     * Draws a frame per refresh until the run duration is up.
+     *
+     * <p>Runs to a deadline rather than a frame count, so how long the market runs does not
+     * depend on how often the display redraws. Counting frames made a run that was not a whole
+     * number of refreshes end early while still reporting the duration it was asked for.
+     */
+    private void render(AtomicReference<MarketStatus> latest, QuotingStrategy maker)
             throws InterruptedException {
-        Duration refresh = renderer.refresh();
-        long frames = config.duration().toMillis() / refresh.toMillis();
+        long refreshMillis = renderer.refresh().toMillis();
+        long start = System.nanoTime();
+        long deadline = start + config.duration().toNanos();
 
         renderer.drawFrame(latest.get(), maker.status(), 0, "live", false);
-        for (long frame = 1; frame <= frames; frame++) {
-            Thread.sleep(refresh.toMillis());
-            long elapsedSeconds = frame * refresh.toMillis() / 1_000;
+        for (long remaining = deadline - System.nanoTime();
+                remaining > 0;
+                remaining = deadline - System.nanoTime()) {
+            // Never sleep past the deadline, or a slow refresh would stretch the run instead.
+            Thread.sleep(Math.min(refreshMillis, TimeUnit.NANOSECONDS.toMillis(remaining) + 1));
+            long elapsedSeconds = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - start);
             renderer.drawFrame(latest.get(), maker.status(), elapsedSeconds, "live", true);
         }
     }
